@@ -1,0 +1,22 @@
+; Engine configuration file for "The Neighborhood" (working title).
+; Pinned engine: Godot 4.7.2 stable (see DECISIONS.md, D-036).
+
+config_version=5
+
+[application]
+
+config/name="The Neighborhood"
+config/description="Historical neighborhood life simulation. Pre-M1 foundation."
+run/main_scene="res://view/main.tscn"
+config/features=PackedStringArray("4.7")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+
+[debug]
+
+gdscript/warnings/untyped_declaration=2
+gdscript/warnings/inferred_declaration=0

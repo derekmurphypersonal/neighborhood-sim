@@ -1,0 +1,6 @@
+{
+  "layer": "tuning",
+  "records": [
+    {"id": "weekly_expense_variation_cents", "value": 800, "label": "gameplay_tuned", "note": "How much a household's weekly spending can vary, in cents. A design value. Not a historical statistic."}
+  ]
+}

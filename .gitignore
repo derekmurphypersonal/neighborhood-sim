@@ -1,0 +1,14 @@
+# Godot
+game/.godot/
+export_presets.cfg
+# OS
+.DS_Store
+Thumbs.db
+# Saves and scratch
+/saves/
+*.tmp
+# Research scans: rights not settled (Q-011). Keep images local.
+/research/**/*.jpg
+/research/**/*.jp2
+/research/**/*.tif
+/research/**/*.png

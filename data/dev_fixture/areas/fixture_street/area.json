@@ -1,0 +1,23 @@
+{
+  "layer": "dev_fixture",
+  "fictional": true,
+  "area_name": "Fixture Street (fictional)",
+  "notice": "FICTIONAL DEVELOPMENT FIXTURE. Fixture Street does not exist and never did. Nothing in this file describes real geography, buildings, businesses or people. It exists only so the game can be built and tested before historical research is complete, and must never be presented as a real place.",
+  "records": [
+    {"id": "fx_st_1", "type": "street", "name": "Fixture Street", "centerline": [[0, 0], [330, 0]], "width_ft": 40, "provenance": {"status": "placeholder"}},
+    {"id": "fx_exit_west", "type": "exit", "point": [0, 0], "provenance": {"status": "placeholder"}},
+    {"id": "fx_exit_east", "type": "exit", "point": [330, 0], "provenance": {"status": "placeholder"}},
+    {"id": "fx_lot_1", "type": "lot", "boundary": [[30, 20], [90, 20], [90, 120], [30, 120]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_bd_1", "type": "building", "lot_id": "fx_lot_1", "label": "Fixture house 1", "building_type": "single-family", "stories": 2, "footprint": [[45, 45], [75, 45], [75, 85], [45, 85]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_lot_2", "type": "lot", "boundary": [[120, 20], [180, 20], [180, 120], [120, 120]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_bd_2", "type": "building", "lot_id": "fx_lot_2", "label": "Fixture house 2", "building_type": "two-family", "stories": 2, "footprint": [[135, 45], [165, 45], [165, 85], [135, 85]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_lot_3", "type": "lot", "boundary": [[210, 20], [270, 20], [270, 120], [210, 120]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_bd_3", "type": "building", "lot_id": "fx_lot_3", "label": "Fixture house 3", "building_type": "single-family", "stories": 2, "footprint": [[225, 45], [255, 45], [255, 85], [225, 85]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_lot_4", "type": "lot", "boundary": [[30, -120], [90, -120], [90, -20], [30, -20]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_bd_4", "type": "building", "lot_id": "fx_lot_4", "label": "Fixture house 4", "building_type": "two-family", "stories": 2, "footprint": [[45, -85], [75, -85], [75, -45], [45, -45]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_lot_5", "type": "lot", "boundary": [[120, -120], [180, -120], [180, -20], [120, -20]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_bd_5", "type": "building", "lot_id": "fx_lot_5", "label": "Fixture house 5", "building_type": "single-family", "stories": 2, "footprint": [[135, -85], [165, -85], [165, -45], [135, -45]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_lot_6", "type": "lot", "boundary": [[210, -120], [270, -120], [270, -20], [210, -20]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_bd_6", "type": "building", "lot_id": "fx_lot_6", "label": "Fixture house 6", "building_type": "two-family", "stories": 2, "footprint": [[225, -85], [255, -85], [255, -45], [225, -45]], "provenance": {"status": "placeholder"}}
+  ]
+}

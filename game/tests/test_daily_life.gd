@@ -1,0 +1,83 @@
+extends "res://tests/test_case.gd"
+## Residents left alone: timetables, needs and conversations (M1-A).
+
+const SimDate := preload("res://sim/clock/sim_date.gd")
+const Simulation := preload("res://sim/simulation.gd")
+const WorldLoader := preload("res://sim/io/world_loader.gd")
+const Records := preload("res://sim/state/records.gd")
+
+const SCENARIO: String = "fixture_street_spring_1950"
+
+
+func _run_until(simulation: Simulation, year: int, month: int, day: int, minute: int) -> void:
+	var target: int = SimDate.to_day_index(year, month, day) * SimDate.MINUTES_PER_DAY + minute
+	while simulation.clock.abs_minute() < target:
+		simulation.tick()
+
+
+func _doing(person: Dictionary) -> String:
+	return person["action"]["kind"] if not person["action"].is_empty() and person["action"]["started"] else ""
+
+
+func test_everyone_is_home_asleep_at_night() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	_run_until(simulation, 1950, 4, 4, 180)  # Tuesday 03:00
+	for person_id: String in simulation.state.sorted_person_ids():
+		var person: Dictionary = simulation.state.people[person_id]
+		var home: String = simulation.state.households[person["household_id"]]["home_id"]
+		check(person["at"] == Records.AT_INSIDE and person["place_id"] == home, person["given_name"] + " is at home at 03:00")
+		check_eq(_doing(person), "sleep", person["given_name"] + " is asleep at 03:00")
+
+
+func test_workers_and_pupils_are_away_on_weekdays_only() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	_run_until(simulation, 1950, 4, 4, 630)  # Tuesday 10:30
+	for person_id: String in simulation.state.sorted_person_ids():
+		var person: Dictionary = simulation.state.people[person_id]
+		var has_away: bool = simulation.world["schedules"][person["schedule_id"]].has("away")
+		check_eq(person["at"] == Records.AT_OFFMAP, has_away, person["given_name"] + " on Tuesday morning")
+	_run_until(simulation, 1950, 4, 9, 630)  # Sunday 10:30
+	for person_id: String in simulation.state.sorted_person_ids():
+		var person: Dictionary = simulation.state.people[person_id]
+		check(person["at"] != Records.AT_OFFMAP, person["given_name"] + " is in the neighborhood on Sunday")
+
+
+func test_residents_look_after_themselves() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	var lowest: Dictionary = {"hunger": Records.NEED_MAX, "rest": Records.NEED_MAX}
+	var small_child_went_out: bool = false
+	for minute: int in 3 * SimDate.MINUTES_PER_DAY:
+		simulation.tick()
+		for person_id: String in simulation.state.sorted_person_ids():
+			var person: Dictionary = simulation.state.people[person_id]
+			lowest["hunger"] = mini(lowest["hunger"], person["needs"]["hunger"])
+			lowest["rest"] = mini(lowest["rest"], person["needs"]["rest"])
+			if simulation.world["schedules"][person["schedule_id"]].get("housebound", false):
+				small_child_went_out = small_child_went_out or person["at"] != Records.AT_INSIDE
+	check(lowest["hunger"] > 0, "nobody went completely hungry in three days")
+	check(lowest["rest"] > 0, "nobody ran completely out of rest in three days")
+	check(not small_child_went_out, "small children stayed at home")
+
+
+func test_neighbors_meet_and_relationships_change() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	simulation.advance_minutes(3 * SimDate.MINUTES_PER_DAY)
+	var conversations: int = 0
+	var first_meetings: int = 0
+	for event: Dictionary in simulation.state.event_log:
+		if event["type"] == "conversation":
+			conversations += 1
+			var a: Dictionary = simulation.state.people[event["a"]]
+			var b: Dictionary = simulation.state.people[event["b"]]
+			check(a["household_id"] != b["household_id"], "conversations are between households")
+			if event["first_meeting"]:
+				first_meetings += 1
+	check(conversations >= 5, "neighbors talked without being told to (%d conversations)" % conversations)
+	check(first_meetings >= 2, "some met for the first time")
+	var changed: int = 0
+	for key: String in simulation.state.relationships:
+		var record: Dictionary = simulation.state.relationships[key]
+		if not record["kin"] and (record["a_to_b"] != 0 or record["b_to_a"] != 0):
+			changed += 1
+			check_eq(record["history"].size(), record["familiarity"], "each relationship remembers its conversations")
+	check(changed >= 2, "regard between neighbors changed")

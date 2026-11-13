@@ -1,0 +1,10 @@
+{
+  "layer": "fiction",
+  "note": "Daily timetables are game design, not historical claims. Times are minutes after midnight. Days: 0 = Sunday ... 6 = Saturday.",
+  "records": [
+    {"id": "sched_worker", "type": "schedule", "wake": 390, "bed": 1320, "away": {"kind": "work", "days": [1, 2, 3, 4, 5], "leave": 450, "back": 1050}, "provenance": {"status": "fictional"}},
+    {"id": "sched_school", "type": "schedule", "wake": 420, "bed": 1230, "away": {"kind": "school", "days": [1, 2, 3, 4, 5], "leave": 495, "back": 915}, "provenance": {"status": "fictional"}},
+    {"id": "sched_at_home", "type": "schedule", "wake": 390, "bed": 1320, "provenance": {"status": "fictional"}},
+    {"id": "sched_small_child", "type": "schedule", "wake": 420, "bed": 1140, "housebound": true, "provenance": {"status": "fictional"}}
+  ]
+}

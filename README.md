@@ -1,0 +1,111 @@
+# The Neighborhood (working title; folder name `lindensims`)
+
+An original historical neighborhood life-simulation game set in the Linden neighborhood of Malden, Massachusetts, played across the whole decade from 1950 through 1959.
+
+**Status (2026-11-13): M1-A, a small playable loop, is built and awaiting review.** It runs on "Fixture Street", a fictional test street; no real Linden geography is in the game yet. The first real area will be the Oliver Street end of Maynard Street.
+
+## Where to start
+
+| If you want to know... | Read |
+|---|---|
+| What has been decided and what is still open | [DECISIONS.md](DECISIONS.md) |
+| What the game is | [docs/GAME_DESIGN.md](docs/GAME_DESIGN.md) |
+| How history gets into the game, and what counts as evidence | [docs/HISTORICAL_RESEARCH_PLAN.md](docs/HISTORICAL_RESEARCH_PLAN.md) |
+| Which sources exist and what has been found so far | [docs/research/SOURCES.md](docs/research/SOURCES.md), [docs/research/FINDINGS.md](docs/research/FINDINGS.md), [docs/research/CANDIDATE_BLOCKS.md](docs/research/CANDIDATE_BLOCKS.md) |
+| How the world is represented as data | [docs/WORLD_DATA_MODEL.md](docs/WORLD_DATA_MODEL.md) |
+| How 1950–1959 passes and how people and places change | [docs/TIME_AND_LIFECYCLE.md](docs/TIME_AND_LIFECYCLE.md) |
+| Engine choice and code structure | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| What has been built and what comes next | [docs/ROADMAP.md](docs/ROADMAP.md), [docs/M1_PLAN.md](docs/M1_PLAN.md) |
+| Rules for AI assistants working in this repo | [CLAUDE.md](CLAUDE.md) |
+
+## Layout
+
+```
+DECISIONS.md  CLAUDE.md  README.md
+docs/            design and research documents
+research/        working copies of source scans (images are not in version control)
+data/
+  historical/    sourced records about the real Linden (empty: nothing verified yet)
+  fiction/       scenarios and timetables (always fictional)
+  tuning/        labeled gameplay numbers
+  dev_fixture/   "Fixture Street", a FICTIONAL test street; not real geography
+game/            the Godot project
+  sim/           simulation core: clock, randomness, state, area, systems, saves
+  view/          the main scene: isometric street, panel, feed
+  tests/         automated tests and the test runner
+  tools/         command-line scripts
+```
+
+## Running and testing
+
+### Requirements
+
+**Godot 4.7.2 stable**, standard build (not .NET). Nothing else: no add-ons, no other languages.
+
+The commands below assume the executable can be run as `godot`. On macOS that is usually:
+
+```
+alias godot="/Applications/Godot.app/Contents/MacOS/Godot"
+```
+
+Run every command from the repository root (the folder containing this README).
+
+### Play
+
+Open `game/project.godot` in the Godot editor and press Play, or run:
+
+```
+godot --path game
+```
+
+- The game starts on Monday 3 April 1950 at 06:00 on the fictional test street.
+- **Time:** the buttons at the top, or Space to pause and 1, 2, 3 for the three speeds.
+- **Your household** is drawn in blue; neighbors in orange. People indoors are counted on the roof of the house they are in; people away at work or school are not shown.
+- **Select** one of your household with the buttons at the top right, or by clicking them on the street.
+- **Send them somewhere:** with one of yours selected, click a house. Clicking your own house sends them home.
+- **Have them talk to a neighbor:** click the neighbor on the street, or press Talk beside the neighbor's name.
+- The panel shows the selected person's needs and how they and each neighbor regard one another. The feed at the bottom lists what has happened.
+
+There are no interiors, no saving from the menu and no ending yet.
+
+### Run the automated tests
+
+```
+godot --headless --path game --script res://tests/run_tests.gd
+```
+
+Prints one line per test and a summary (currently `55 tests`, `0 failed`). The process exits with code 0 if all tests pass and 1 if any fail. To run only some test files, add a name filter: `-- save_load`.
+
+### Run three days with nobody playing
+
+```
+godot --headless --path game --script res://tools/run_days.gd -- --days 3 --seed 1950
+```
+
+Prints the conversations that happened, how neighbors now regard each other, and a state hash. With seed 1950 and 3 days the hash should be `06b629b1d7ced220dd55109b87dc3afdc44fba6be228d79ee56139fe3dc8ff2b`.
+
+### Run the whole decade headless
+
+```
+godot --headless --path game --script res://tools/run_decade.gd -- --seed 1950
+```
+
+Advances from 1 January 1950 to the end of 1959 day by day and prints a state hash. With seed 1950 it should be `ae8502ee11be46dfce36fd731dac4503a271282706e64b888cdeebc8a9173ca1`. The same seed always gives the same hash.
+
+### Validate the data files
+
+```
+godot --headless --path game --script res://tools/validate_data.gd
+```
+
+Checks every file under `data/` against the provenance and layer rules and that each scenario loads. Exits with code 1 if there are errors.
+
+### Adding a test
+
+Create `game/tests/test_<topic>.gd` that begins with `extends "res://tests/test_case.gd"`, and add methods whose names start with `test_`. Use `check(condition, message)` and `check_eq(actual, expected, message)`. The runner finds the file automatically.
+
+## Working with more than one assistant
+
+Claude is the primary implementer; ChatGPT acts as a product, design and research partner. The documents above are the shared memory between sessions and assistants. Anything agreed in a chat that is not written into `DECISIONS.md` or the relevant doc should be treated as not yet agreed.
+
+When handing context to another assistant, give it `DECISIONS.md` first, then the document for the topic under discussion.
