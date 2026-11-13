@@ -2,7 +2,7 @@
 
 An original historical neighborhood life-simulation game set in the Linden neighborhood of Malden, Massachusetts, played across the whole decade from 1950 through 1959.
 
-**Status (2026-11-13): M1-A, a small playable loop, is built and awaiting review.** It runs on "Fixture Street", a fictional test street; no real Linden geography is in the game yet. The first real area will be the Oliver Street end of Maynard Street.
+**Status (2026-11-13): M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B has not started and is not authorized.** No real Linden geography is in the game yet. The first real area will be the Oliver Street end of Maynard Street, once its map readings are confirmed.
 
 ## Where to start
 
@@ -78,7 +78,15 @@ There are no interiors, no saving from the menu and no ending yet.
 godot --headless --path game --script res://tests/run_tests.gd
 ```
 
-Prints one line per test and a summary (currently `55 tests`, `0 failed`). The process exits with code 0 if all tests pass and 1 if any fail. To run only some test files, add a name filter: `-- save_load`.
+Prints one line per test and a summary (currently `59 tests, 270 checks, 0 failed`). The process exits with code 0 if all tests pass and 1 if any fail. To run only some test files, add a name filter: `-- save_load`.
+
+### Check the main scene without playing
+
+```
+godot --headless --path game -- --self-check
+```
+
+Loads the main scene, confirms the music and chimes loaded, gives one order, runs a day and a half through the same path as play (bubbles, notices and all), and prints `SELF-CHECK  passed` or the problems found. Exits with code 0 only if all is well. It cannot tell you whether the picture looks right or the music sounds right.
 
 ### Run three days with nobody playing
 
@@ -94,7 +102,7 @@ Prints the conversations that happened, how neighbors now regard each other, and
 godot --headless --path game --script res://tools/run_decade.gd -- --seed 1950
 ```
 
-Advances from 1 January 1950 to the end of 1959 day by day and prints a state hash. With seed 1950 it should be `ae8502ee11be46dfce36fd731dac4503a271282706e64b888cdeebc8a9173ca1`. The same seed always gives the same hash.
+Advances from 1 January 1950 to the end of 1959 day by day and prints `Events logged: 102` and a state hash. With seed 1950 the hash should be `ae8502ee11be46dfce36fd731dac4503a271282706e64b888cdeebc8a9173ca1`. The same seed always gives the same hash.
 
 ### Validate the data files
 

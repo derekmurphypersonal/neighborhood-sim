@@ -74,7 +74,8 @@ The model is described in [TIME_AND_LIFECYCLE.md §2–§4](TIME_AND_LIFECYCLE.m
 - **Player orders** enter through `Simulation.give_order()`, are validated, queued on the resident, and recorded with their minute in `input_log` (inputs, not state).
 - **Walking** follows waypoints from the area: door, front of the house on the street edge, target. Doors and fronts are derived from footprints and the street line when the area is loaded.
 - **`Simulation.trails`** holds where each person walked during the latest tick. It exists only so the view can draw walking smoothly; it is not state, is never saved, and no system reads it.
-- **No fractional numbers in state** (D-042). Positions are whole inches, money whole cents, needs whole units, time whole minutes.
+- **No fractional numbers in state** (D-042).
+- **The save contract** (D-040; P-015 proposed) is written at the top of `sim/io/save_game.gd`. `SaveGame.to_text(simulation)` gives the whole save as text. `SaveGame.restore(text, world)` is the one call that turns save text back into a simulation; it returns `ok`, `error`, `simulation` and `changed_data`, and never crashes on bad input. `SaveGame.parse(text)` checks that a save has every required part. `Simulation.from_save(world, saved)` takes only the save's `simulation` part and is the low-level step `restore()` uses. `write_file` and `read_file` report failures as text. Nothing in the core decides where saves are kept; tests use a scratch folder under the system temp folder, never the per-user data folder. Positions are whole inches, money whole cents, needs whole units, time whole minutes.
 
 ## 5. Repository layout
 
@@ -120,7 +121,7 @@ Notes:
 
 ## 6. Testing and validation *(confirmed, D-031)*
 
-**A lightweight in-repository test runner, no add-ons.** Verified on the pinned engine version: Godot provides headless execution of a script (`--headless --script`) and process exit codes; it does not ship a GDScript unit-test framework. The runner is about seventy lines built on those. As of M1-A there are 55 tests.
+**A lightweight in-repository test runner, no add-ons.** Verified on the pinned engine version: Godot provides headless execution of a script (`--headless --script`) and process exit codes; it does not ship a GDScript unit-test framework. The runner is about seventy lines built on those. There are currently 59 tests.
 
 - `game/tests/run_tests.gd` finds every `test_*.gd` in `game/tests/`, runs each method whose name starts with `test_` on a fresh instance, prints a report, and exits 0 if all passed or 1 otherwise. A test that makes no checks counts as a failure.
 - `game/tests/test_case.gd` is the base class, with `check` and `check_eq`.
@@ -135,12 +136,12 @@ Commands are in the [README](../README.md).
 | **Randomness tests** | Same seed repeats; different seeds differ; streams are independent | Built |
 | **World tests** | Scenario loads; placeholder flag; derived doors and fronts; routes; a second area works; the core names no particular place | Built |
 | **Reproducibility tests** | Same seed gives the same state hash, day by day and minute by minute; stopping and continuing equals running straight through | Built |
-| **Save and load tests** | No fractional numbers in state; save, load, save is byte-identical; continuing after a save at thirteen points (with and without orders) matches an uninterrupted run; changed data is detected; file round trip | Built |
+| **Save and load tests** | No fractional numbers in state; save, load, save is byte-identical; continuing after a save at thirteen points (with and without orders) matches an uninterrupted run; `restore()` returns the simulation or refuses bad, incomplete or wrong-scenario saves without crashing; changed data is reported; file round trip in a scratch folder; file failures are reported | Built |
 | **Detail agreement** | Day-level results agree between minute-by-minute and day-by-day runs | Built for the two levels that exist |
 | **Daily life tests** | Everyone home asleep at night; away only on weekdays; needs never bottom out; small children stay home; neighbors meet and relationships change | Built |
 | **Order tests** | Only the player's household takes orders; go-to and talk-to work; orders change the outcome | Built |
 | **Immutability test** | Every file under `data/` is byte-identical after running | Built |
-| **Presentation** | The main scene loads headless; a screenshot can be captured under a virtual display (`-- --screenshot <file> --minutes <n>`) | Checked by hand; mouse and keyboard control not exercised automatically |
+| **Presentation** | `-- --self-check` loads the main scene, confirms the audio loaded, gives an order and runs a day and a half through the same path as play; a screenshot can be captured under a virtual display (`-- --screenshot <file> --minutes <n>`) | Built as a command, not part of the test suite. Looks and sound are judged by a person; mouse and keyboard control is not exercised automatically |
 
 Still to add when the data exists: checks on IDs resolving between records, validity intervals and geometry.
 

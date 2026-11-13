@@ -1,6 +1,6 @@
 # Roadmap and First Playable Milestone
 
-Status: updated 2026-11-13. **M0 is reviewed and accepted. M1-A is built and its loop accepted by Derek (D-041); the additions he asked for are in and accepted (D-044). M1-B has not been started or authorized.** See [DECISIONS.md](../DECISIONS.md).
+Status: updated 2026-11-13. **M0 is reviewed and accepted. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B has not started and is not authorized.** See [DECISIONS.md](../DECISIONS.md).
 
 Milestones are defined by what a player can do at the end of each, not by which systems exist.
 
@@ -39,7 +39,7 @@ Milestones are defined by what a player can do at the end of each, not by which 
 - A fictional fixture world ("Fixture Street": twelve residents in four households) loaded from data.
 - Day-by-day (abstract level) simulation of two things only: birthdays, and a simple weekly household budget with seeded variation. Events are written to a life-event log.
 - A data validator enforcing the provenance and layer rules, including that the fixture is marked fictional and never uses the real place names.
-- 31 automated tests (55 after M1-A).
+- 31 automated tests at the end of M0 (59 now).
 
 It deliberately does **not** include: needs, schedules, movement, conversations, relationships, jobs, interiors, any drawing of a map, player control, saves, or the close and routine detail levels. Those are M1 and M2.
 
@@ -50,7 +50,7 @@ It deliberately does **not** include: needs, schedules, movement, conversations,
 
 ### Left over from M0
 
-- **Mac verification.** Not yet reported. The commands and expected results are in the [README](../README.md); the expected hashes changed in M1-A.
+- **Mac verification.** Derek has Godot 4.7.2 on the Mac, has played M1-A there, and reported one failing test, `test_save_file_round_trip`. That failure was reproduced on Linux by making the per-user data folder unwritable, and fixed (see M1-A stabilization below). The Mac's own output for the test, hash and self-check commands in the [README](../README.md) has not been reported since the fix.
 - **Version control.** The folder is a git repository whose remote is Derek's personal repository, https://github.com/derekmurphypersonal/neighborhood-sim (D-011). Pushing is done from the Mac, because the assistant's environment has no GitHub credentials for it. Never add a remote under the `iuvonauts` organization.
 - **Historical data.** None entered. Maynard Street is chosen (D-037); its readings await confirmation.
 
@@ -62,7 +62,7 @@ M1 is delivered in two parts with a review between them (D-038). The full plan, 
 
 **Where:** the Oliver Street end of Maynard Street, about eight to ten houses (D-037). Until the map readings for it are confirmed and entered, M1 runs on the fictional Fixture Street (D-035), which is always identified as fictional on screen and in data. Because areas and scenarios are separate data behind one loader (D-039), the swap needs no simulation code changes.
 
-### M1-A: a small playable loop — built and accepted by Derek (D-041)
+### M1-A: a small playable loop — accepted (D-041, D-044)
 
 What you can do now, on Fixture Street:
 
@@ -88,23 +88,38 @@ Not in M1-A, by design: interiors, an enterable building, wages tied to days wor
 | Saving at an arbitrary moment and continuing equals running straight through | Met in automated tests at thirteen save points, with and without orders |
 | Derek can start it and play it | Met for the first build: Derek played it on the Mac and judged the loop good. Derek then tried the bubbles, signals and music and accepted them (D-044). |
 
+#### M1-A stabilization (2026-11-13)
+
+- **The failing test.** `test_save_file_round_trip` wrote its file into the per-user data folder. Where that folder cannot be written the write failed, and the test then crashed reading a save that was not there. The test now uses a scratch folder of its own under the system temp folder and cleans up after itself.
+- **The save contract** is now explicit and tested (proposed as P-015): `SaveGame.to_text()` writes a whole save; `SaveGame.restore()` is the one call that turns save text back into a simulation and never crashes on bad input; `SaveGame.parse()` checks a save has every part; `Simulation.from_save()` is the low-level step `restore()` uses. File writing creates its folder and reports the reason for any failure.
+- **A scene self-check** (`-- --self-check`) loads the main scene, confirms the audio loaded, gives an order and runs a day and a half through the same path as play.
+- **Verified on Linux, Godot 4.7.2:** 59 tests, 270 checks, 0 failed, also with the per-user data folder unwritable; data validation 0 errors; decade hash and three-day hash unchanged from the README; self-check passed headless and with drawing under a virtual display.
+- **Not verified:** any of this on the Mac since the fix; how the game looks and sounds, beyond Derek's earlier acceptance.
+
 ### Before M1-B can begin
 
-1. Derek gives next steps and authorizes M1-B. Everything else asked of him for M1-A is settled: the additions are accepted (D-044), records stay as dictionaries (D-042), and conversations play out (D-043).
-2. New commits are pushed to https://github.com/derekmurphypersonal/neighborhood-sim (D-011); see Q-020 for who pushes.
+1. Derek reviews this stabilization report and authorizes M1-B.
+2. Ideally the README's test, decade and self-check commands are run once on the Mac and the output reported.
 
-### M1-B: the complete first week — not started
+### M1-B: the complete first week — not started, not authorized
 
-- Four to six households, fifteen to twenty-five residents.
-- The player household's home interior, from a fictional floor-plan module matched to the building type (D-032).
-- One enterable institution (for Maynard St., the branch library on Oliver St.; on the fixture, a fictional equivalent).
-- A fourth need, and needs met by specific actions in specific places.
-- Money that follows behavior: wages for days worked, rent, a shopping errand, running short.
-- Seven full days with weekday, Saturday and Sunday differences; fast passage while your household sleeps or is away.
-- End-of-week summary from the event log.
-- Building info view: documented exterior facts with sources; interiors and the fixture labelled fictional.
-- Save and load from the menu.
-- Maynard St. data in place of the fixture, if confirmed by then.
+Scope and order as set by Derek (D-045). Implement only this, in this order, entirely on the fictional fixture:
+
+1. Expand the fictional fixture scenario to four to six households and fifteen to twenty-five residents.
+2. Add seven-day schedules with clear weekday, Saturday and Sunday behavior.
+3. Define and test any new action and place capabilities needed for interiors, institution entry, shopping and need fulfillment.
+4. Add a fictional player-home interior, explicitly labelled fictional.
+5. Add one fictional enterable institution.
+6. Add the `fun` need and place-specific actions that satisfy needs.
+7. Add behavior-based household finances: attendance-based wages, rent, groceries and shortfall.
+8. Add the end-of-week summary generated from the event log.
+9. Add the building information view, keeping documented exterior facts separate from fictional interiors and fixture content.
+10. Add menu save and load, and extend the exact-save tests for every new state field.
+11. Playtest the full week and record pacing observations and the final M1 judgment.
+
+Maynard Street is not part of M1-B. It remains `probable`, unconfirmed research (finding F-058) and is not entered as historical data until confirmed (D-037). Nothing from M2 is to be added.
+
+For every step: tests first when fixing a bug; the core stays independent of scenes, rendering, input and wall-clock time; seeded randomness only; no fractional numbers in state; documents updated when a contract changes; `DECISIONS.md` updated for lasting choices; small single-purpose commits; exact commands and actual results reported.
 
 ### M1 done when (unchanged)
 

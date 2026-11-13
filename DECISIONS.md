@@ -9,7 +9,7 @@ Rules for this file:
 - A proposal becomes confirmed only when Derek says so. It then gets a new D-number; the proposal row stays, pointing to it.
 - Each entry has an ID, a date and a source. Longer reasoning lives in the linked doc.
 
-Last updated: 2026-11-13 (M1-A delivered for review)
+Last updated: 2026-11-13 (M1-A stabilized; M1-B scope set, not authorized)
 
 ## Confirmed
 
@@ -91,10 +91,15 @@ Last updated: 2026-11-13 (M1-A delivered for review)
 | D-042 | 2026-11-13 | **Simulation records stay plain dictionaries, defined in one file, under a strict rule that simulation state holds no fractional numbers.** From P-014. | Derek |
 | D-043 | 2026-11-13 | **For now, conversations play out.** A player's order does not interrupt a conversation already under way; the resident finishes talking and then obeys. Resolves Q-018; may be revisited. | Derek |
 | D-044 | 2026-11-13 | **The activity bubbles, event signals and placeholder music added to M1-A are accepted.** The music remains a placeholder (Q-019). | Derek |
+| D-045 | 2026-11-13 | **M1-B scope and order.** After authorization, implement only these eleven steps, in order, entirely on the fictional fixture: (1) four to six households, fifteen to twenty-five residents; (2) seven-day schedules with weekday, Saturday and Sunday behavior; (3) new action and place capabilities for interiors, institution entry, shopping and need fulfillment, defined and tested; (4) a fictional player-home interior, labelled fictional; (5) one fictional enterable institution; (6) the `fun` need and place-specific need actions; (7) behavior-based finances: attendance-based wages, rent, groceries, shortfall; (8) end-of-week summary from the event log; (9) building information view separating documented exterior facts from fictional interiors and fixture content; (10) menu save and load, with exact-save tests extended to every new state field; (11) a full-week playtest with pacing observations and the final M1 judgment. Maynard Street stays unconfirmed research and is not entered as data. No M2 systems or speculative abstractions. | Derek |
 
 ## Proposals
 
-There are no open proposals.
+Awaiting Derek's confirmation:
+
+| ID | Proposal | Why |
+|---|---|---|
+| P-015 | **`SaveGame.restore(text, world)` is the single way to load a save,** returning `ok`, `error`, `simulation` and `changed_data` and never crashing on bad input; `Simulation.from_save()` is its low-level step; file writing reports failures as text; the core does not decide where saves are kept; tests never write to the per-user data folder. | Makes the contract between `to_text`, `parse` and `from_save` explicit after a test failed where the per-user data folder could not be written. Already implemented and tested, as part of stabilizing M1-A. |
 
 ### Closed proposals
 
@@ -159,3 +164,4 @@ Kept so that older references resolve.
 | 2026-11-13 | M0 review and M1 plan approved by Derek. D-037 (Maynard Street), D-038 (M1 in two parts), D-039 (area and scenario data), D-040 (exact saves) confirmed. Q-001 resolved. P-014 proposed. Q-016, Q-017, Q-018 opened. M1-A built; see `docs/ROADMAP.md`. |
 | 2026-11-13 | M1-A reviewed by Derek: loop accepted (D-041). Activity bubbles, clearer event indication and placeholder background music added. Q-019 (music) and Q-020 (GitHub access) opened. P-014 and Q-018 still await an answer. |
 | 2026-11-13 | Derek accepted the M1-A additions (D-044), confirmed P-014 as D-042, and resolved Q-018 as D-043. M1-B awaits his next steps and is not authorized. |
+| 2026-11-13 | M1-A stabilized: save-file test fixed and the save contract made explicit (P-015 proposed). M1-B scope and order recorded as D-045; M1-B is not authorized. Stale test counts, hashes and status wording reconciled across documents; obsolete sections of `docs/M1_PLAN.md` labelled. Note: D-042 was recorded from Derek's message "p-014 is fine"; a later instruction asked for P-014 to stay proposed if unconfirmed, so this entry flags it for Derek to confirm that D-042 stands. |

@@ -6,7 +6,7 @@ Instructions for Claude (and any other AI assistant) working in this repository.
 
 An original historical neighborhood life-simulation game set in Linden, Malden, Massachusetts, played through 1950–1959. Real place, fictional people. Gameplay and emergent stories come first; history supplies the stage and must not be falsified.
 
-Current phase: **M1-A (a small playable loop on the fictional Fixture Street) is built and accepted (D-041). M1-B is not started and not yet authorized.** See `docs/ROADMAP.md` and `docs/M1_PLAN.md`.
+Current phase: **M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B has not started and is not authorized.** See `docs/ROADMAP.md` and `docs/M1_PLAN.md`. Maynard Street research is `probable` and must not be entered as historical data until confirmed.
 
 ## Read before working
 
@@ -62,7 +62,7 @@ Engine: Godot 4.7.2 stable (D-015, D-036). Do not begin a milestone until Derek 
 - **Randomness:** only through the simulation's seeded generators. No global random calls in simulation code.
 - **No fractional numbers in simulation state** (D-042). Money is whole cents, positions whole inches, needs and time whole units. Fractions may be used inside a calculation but never stored. Record shapes are defined only in `game/sim/state/records.gd`.
 - **The core names no place.** Nothing under `game/sim/` may mention the fixture or any real street; which world runs is decided by the scenario (D-039). A test enforces this.
-- **Saves must stay exact** (D-040). Any new state must be covered by the save-and-continue tests before it is used.
+- **Saves must stay exact** (D-040). Any new state must be covered by the save-and-continue tests before it is used. Load saves only through `SaveGame.restore()`; `Simulation.from_save()` is its low-level step. Tests must not write to the per-user data folder; use a scratch folder under the system temp folder.
 - **Time:** only through the simulation core's single continuous clock (D-013, D-029). No system keeps its own time or depends on frame rate. Systems advance at the detail levels defined in `docs/TIME_AND_LIFECYCLE.md` (close, routine, abstract); do not simulate every movement and conversation for residents far from the player (D-026 to D-028).
 - **Historical data is read-only at runtime** (D-023). Simulation state refers to it by ID. Divergence from the record is stored in simulation state with a reference to the record's provenance (D-024), never by editing the record.
 - **Data over code:** historical facts, content definitions and tuning values live in `data/`, not in scripts. No historical fact is hard-coded.

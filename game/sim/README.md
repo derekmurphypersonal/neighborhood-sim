@@ -8,7 +8,7 @@ Plain typed GDScript with no scene nodes, rendering, input or wall-clock time (D
 | `rng/` | Seeded random streams | nothing |
 | `state/` | Record shapes (`records.gd`) and mutable state (`world_state.gd`) | nothing |
 | `world/` | The static area: streets, buildings, exits, routes | nothing |
-| `io/` | Reading and validating data; building a world from a scenario; saves | `clock/`, `state/`, `world/` |
+| `io/` | Reading and validating data; building a world from a scenario; saves (load only through `SaveGame.restore()`) | `clock/`, `state/`, `world/` |
 | `systems/` | Rules, as static functions called by `simulation.gd`: `lifecycle`, `economy` (day level); `needs`, `behavior`, `social` (minute level) | `clock/`, `state/`, `world/` |
 | `simulation.gd` | Owns clock, RNG and state; `tick()`; player orders; save and restore | all of the above |
 

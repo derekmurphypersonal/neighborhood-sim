@@ -1,6 +1,6 @@
 # M1 Implementation Plan (proposal)
 
-Status: 2026-11-13. **Approved by Derek, including the document changes in §8, which have been applied. M1-A (steps 1 to 10) has been built and is awaiting review; M1-B has not been started.** Current status is tracked in [ROADMAP.md](ROADMAP.md). One departure from this plan: step 3 kept records as plain dictionaries under a no-fractions rule instead of typed classes (confirmed as D-042 in `DECISIONS.md`).
+Status: updated 2026-11-13. **This is the plan Derek approved for M1. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B has not started and is not authorized.** Current status and the authoritative M1-B scope are in [ROADMAP.md](ROADMAP.md). Sections 6 to 9 below were written before M1-A was built; each now carries a note saying what is obsolete. One departure from this plan: step 3 kept records as plain dictionaries under a no-fractions rule instead of typed classes (confirmed as D-042).
 
 The M1 milestone and its outcome are unchanged (D-021, [ROADMAP.md](ROADMAP.md)): one week on one block, with one player household among autonomous neighbors, that is enjoyable to watch and direct. This plan only splits the work in two.
 
@@ -20,7 +20,7 @@ Consequences for the plan:
 - Maynard St. is a good first street: a plain residential block is exactly what M1-A needs, and it can be drawn from the map alone.
 - That is more than M1 needs. Recommend the **Oliver St. end of Maynard**, about eight to ten houses on both sides, so the walk to the school and library is short when those are added.
 - The requirement in M1 for "at least one enterable shop or institution if the block has one" is met by reaching just off the street to Oliver St. (the branch library is the natural choice), in M1-B.
-- Nothing can be entered as historical data until a person confirms the readings against full-resolution images (see [research/CANDIDATE_BLOCKS.md](research/CANDIDATE_BLOCKS.md)). Until then M1 runs on Fixture Street (D-035), built in the same data shape so the swap is a data change (§5).
+- Nothing can be entered as historical data until a person confirms the readings against full-resolution images (see [research/CANDIDATE_BLOCKS.md](research/CANDIDATE_BLOCKS.md)). M1 runs on Fixture Street (D-035, D-045), built in the same data shape so the later swap is a data change (§5).
 
 ## 2. Proposed scope
 
@@ -44,19 +44,7 @@ Deliberately left for M1-B: interiors, an enterable institution, the full needs 
 
 ### M1-B: the complete first week
 
-Everything in the M1 "In scope" and "Done when" lists in [ROADMAP.md](ROADMAP.md) that M1-A does not cover:
-
-- Four to six households, fifteen to twenty-five residents.
-- The player household's home interior, from a fictional floor-plan module matched to the building type (D-032).
-- One enterable institution (on Maynard St., the branch library on Oliver St.; on the fixture, a fictional equivalent).
-- A slightly fuller needs set (add fun), and needs met by specific actions in specific places.
-- Money that follows behavior: wages for days actually worked, rent on its due day, groceries bought as an errand, running short.
-- Seven full days with weekday, Saturday and Sunday differences; fast passage while your household sleeps or is away.
-- End-of-week summary built from the event log.
-- Building info view: documented exterior facts with sources; interiors and the fixture labelled fictional.
-- Save and load from the menu.
-- Maynard St. data in place of the fixture, if confirmed by then.
-- Derek's playtest and the written judgment (ROADMAP "Done when" item 7).
+**Superseded wording.** The scope and order of M1-B were restated by Derek after M1-A (D-045) and are listed in §4 and in [ROADMAP.md](ROADMAP.md). The main change from the original proposal: M1-B runs entirely on the fictional fixture, the enterable institution is fictional, and Maynard Street data is not part of it.
 
 ## 3. Dependencies
 
@@ -87,7 +75,7 @@ What depends on what, and why it matters for order:
 
 Each step ends with tests passing and, from step 5 on, something visible. Nothing is started before approval.
 
-**M1-A**
+**M1-A** (done)
 
 1. **Housekeeping.** Correct `.gitignore` (§7, R-7). Create the repository (D-011). Confirm the Mac run (§6).
 2. **Tick pipeline.** One way of advancing time, in minutes, with day-boundary work triggered when midnight is crossed. The M0 day-by-day run becomes "advance many minutes with only day-level systems active". Systems register in a fixed order. Fixes R-1.
@@ -100,16 +88,19 @@ Each step ends with tests passing and, from step 5 on, something visible. Nothin
 9. **Player commands.** Select, send, talk. Commands are timestamped inputs, recorded so runs can be replayed.
 10. **Feed and panels.** Event feed, household panel, relationship panel. M1-A review with Derek.
 
-**M1-B**
+**M1-B** (as set by Derek, D-045; not authorized)
 
-11. Scale the scenario to full size; weekday, Saturday and Sunday schedules.
-12. Finances by behavior: attendance-based wages, rent, shopping errand, shortfall.
-13. Interior for the player's home; enter and leave buildings.
-14. One enterable institution.
-15. Fourth need and place-specific need actions.
-16. End-of-week summary; building info view.
-17. Save and load in the menu.
-18. Swap in Maynard St. data if confirmed. Playtest and written judgment.
+1. Expand the fictional fixture scenario to four to six households and fifteen to twenty-five residents.
+2. Add seven-day schedules with clear weekday, Saturday and Sunday behavior.
+3. Define and test any new action and place capabilities needed for interiors, institution entry, shopping and need fulfillment.
+4. Add a fictional player-home interior, explicitly labelled fictional.
+5. Add one fictional enterable institution.
+6. Add the `fun` need and place-specific actions that satisfy needs.
+7. Add behavior-based household finances: attendance-based wages, rent, groceries and shortfall.
+8. Add the end-of-week summary generated from the event log.
+9. Add the building information view, keeping documented exterior facts separate from fictional interiors and fixture content.
+10. Add menu save and load, and extend the exact-save tests for every new state field.
+11. Playtest the full week and record pacing observations and the final M1 judgment.
 
 ## 5. Replacing Fixture Street with a Linden block
 
@@ -169,32 +160,11 @@ These are written in step 3, before any M1 system exists, and every later system
 
 ## 6. Mac verification
 
-Install Godot **4.7.2 stable**, standard build (not .NET), from godotengine.org. Then in Terminal:
-
-```
-cd /Users/derekmurphy/lindensims
-alias godot="/Applications/Godot.app/Contents/MacOS/Godot"
-
-godot --version
-godot --headless --path game --script res://tests/run_tests.gd ; echo "exit code: $?"
-godot --headless --path game --script res://tools/run_decade.gd -- --seed 1950
-godot --headless --path game --script res://tools/validate_data.gd ; echo "exit code: $?"
-```
-
-Expected:
-
-| Command | Expected |
-|---|---|
-| `--version` | Starts with `4.7.2.stable` |
-| Tests | Last line `31 tests, 80 checks, 0 failed`, then `exit code: 0` |
-| Decade run | `Events logged: 128` and `State hash: c7f76bda7cddf1e4ad96630866ea1cf010f455e19e6a5fda4666ce6493cc01a7` |
-| Validation | `Data validation: 0 error(s).`, then `exit code: 0` |
-
-The hash line matters most: the same hash on the Mac as on Linux shows the simulation is reproducible across machines, not only across runs. A different hash is not a failure of the Mac but is something to investigate before M1 (§7, R-5).
-
-If the app is somewhere other than `/Applications`, adjust the alias. If macOS blocks the first launch, open Godot once from Finder.
+**Obsolete.** This section listed commands and expected results for the M0 build (31 tests and an M0 state hash). Both changed in M1-A. The current commands and expected results are in the [README](../README.md) under "Running and testing"; do not use any earlier values.
 
 ## 7. Architectural risks found in M0
+
+**Historical, with outcomes.** This is the review of the M0 code made before M1-A. Outcome after M1-A: R-1, R-2, R-3, R-4, R-6 and R-7 were fixed as recommended (R-2 by the no-fractions rule, D-042). R-5 was fixed by replacing the seeding with a self-contained function; agreement between machines is still unverified. R-8 is open question Q-016. R-9 is unchanged. R-10 is settled in code and noted in [WORLD_DATA_MODEL.md §14](WORLD_DATA_MODEL.md).
 
 Reviewed against what M1 will ask of the code. Ordered by how costly each would be if left.
 
@@ -217,7 +187,7 @@ Not recommended, though they might seem useful: an entity-component framework, a
 
 ## 8. Recommended changes to DECISIONS.md and ROADMAP.md
 
-None of these alters a confirmed decision. None has been applied.
+**Historical: all applied.** Derek approved these and they were made on 2026-11-13 (D-037 to D-040, Q-016, Q-017). The list is kept as the record of what was recommended.
 
 **DECISIONS.md**
 
@@ -237,6 +207,8 @@ None of these alters a confirmed decision. None has been applied.
 5. Add a research item: log the Maynard St. reading as a finding, and confirm it against full-resolution sheets from both the 1951 and 1957 volumes.
 
 ## 9. What is needed from Derek
+
+**Obsolete.** All five items below were settled on 2026-11-13. What is needed now is in [ROADMAP.md](ROADMAP.md) under "Before M1-B can begin".
 
 1. Approve, amend or reject the M1-A / M1-B scope (§2) and the order (§4).
 2. Confirm the stretch of Maynard St. (§1).
