@@ -58,7 +58,9 @@ func test_saturday_is_different() -> void:
 			"sched_shift":
 				check_eq(_away_kind(simulation, person), "work", person["given_name"] + " works Saturday morning")
 			"sched_storekeeper":
-				check_eq(_doing(person), "work", person["given_name"] + " keeps the store on Saturday")
+				var store: String = simulation.area.institution_of_kind("store")
+				check(person["at"] == Records.AT_INSIDE and person["place_id"] == store, person["given_name"] + " is in the store on Saturday morning")
+				check(["work", "talk"].has(_doing(person)), person["given_name"] + " is working there, or talking with a customer")
 			_:
 				check(person["at"] != Records.AT_OFFMAP, person["given_name"] + " is in the neighborhood on Saturday morning")
 	_run_until(simulation, 1950, 4, 8, 840)  # Saturday 14:00
@@ -134,19 +136,74 @@ func test_weekday_mornings_start_early() -> void:
 
 func test_residents_look_after_themselves() -> void:
 	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
-	var lowest: Dictionary = {"hunger": Records.NEED_MAX, "rest": Records.NEED_MAX}
+	var lowest: Dictionary = {}
+	for need_name: String in Records.NEED_NAMES:
+		lowest[need_name] = Records.NEED_MAX
 	var small_child_went_out: bool = false
 	for minute: int in 3 * SimDate.MINUTES_PER_DAY:
 		simulation.tick()
 		for person_id: String in simulation.state.sorted_person_ids():
 			var person: Dictionary = simulation.state.people[person_id]
-			lowest["hunger"] = mini(lowest["hunger"], person["needs"]["hunger"])
-			lowest["rest"] = mini(lowest["rest"], person["needs"]["rest"])
+			for need_name: String in Records.NEED_NAMES:
+				lowest[need_name] = mini(lowest[need_name], person["needs"][need_name])
 			if simulation.world["schedules"][person["schedule_id"]].get("housebound", false):
 				small_child_went_out = small_child_went_out or person["at"] != Records.AT_INSIDE
 	check(lowest["hunger"] > 0, "nobody went completely hungry in three days")
 	check(lowest["rest"] > 0, "nobody ran completely out of rest in three days")
+	check(lowest["fun"] > 0, "nobody ran completely out of fun in three days")
 	check(not small_child_went_out, "small children stayed at home")
+
+
+## Each need is met by particular actions in particular places.
+func test_needs_are_met_in_the_right_places() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	check_eq(Records.NEED_NAMES, ["hunger", "rest", "company", "fun"] as Array[String], "the four needs")
+	var home_of: Dictionary = {}
+	for person_id: String in simulation.state.sorted_person_ids():
+		home_of[person_id] = simulation.state.households[simulation.state.people[person_id]["household_id"]]["home_id"]
+	var seen: Dictionary = {"pastime": 0, "play": 0}
+	var misplaced: Array[String] = []
+	var player_rooms: Dictionary = {}
+	for minute: int in 4 * SimDate.MINUTES_PER_DAY:
+		simulation.tick()
+		for person_id: String in simulation.state.sorted_person_ids():
+			var person: Dictionary = simulation.state.people[person_id]
+			var doing: String = _doing(person)
+			var at_home: bool = person["at"] == Records.AT_INSIDE and person["place_id"] == home_of[person_id]
+			var age: int = SimDate.age_on(person["birth_day"], simulation.clock.day_index)
+			match doing:
+				"eat", "sleep", "pastime":
+					if not at_home:
+						misplaced.append("%s did %s away from home" % [person["given_name"], doing])
+					if person["household_id"] == "fx_hh_1":
+						player_rooms[doing] = person["spot"]
+				"play":
+					if person["at"] != Records.AT_OUTSIDE or age < 4 or age > 15:
+						misplaced.append("%s (age %d) played where or when they should not" % [person["given_name"], age])
+					if simulation.clock.minute_of_day < 480 or simulation.clock.minute_of_day >= 1190:
+						misplaced.append("%s played outdoors at night" % person["given_name"])
+			if seen.has(doing):
+				seen[doing] += 1
+	check_eq(misplaced, [] as Array[String], "eating, sleeping and pastimes happen at home; play happens outdoors, by day, for children")
+	check(seen["pastime"] > 0, "people took up pastimes at home")
+	check(seen["play"] > 0, "children played outside")
+	check_eq(player_rooms.get("eat", "?"), "kitchen", "meals are in the kitchen")
+	check_eq(player_rooms.get("sleep", "?"), "bedroom", "sleep is in the bedroom")
+	check_eq(player_rooms.get("pastime", "?"), "living", "pastimes are in the living room")
+
+
+func test_fun_falls_and_is_restored() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	simulation.advance_minutes(120)
+	var person: Dictionary = simulation.state.people["fx_p_01"]
+	check(person["needs"]["fun"] < Records.NEED_MAX, "fun falls while awake")
+	person["needs"]["fun"] = 20000
+	simulation.give_order("fx_p_01", {"kind": "use_room", "room_id": "living"})
+	var best: int = 0
+	for minute: int in 60:
+		simulation.tick()
+		best = maxi(best, person["needs"]["fun"])
+	check(best > 40000, "a pastime in the living room restores it")
 
 
 func test_neighbors_meet_and_relationships_change() -> void:

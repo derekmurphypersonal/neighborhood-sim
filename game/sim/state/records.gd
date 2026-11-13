@@ -11,7 +11,7 @@ extends RefCounted
 ## all back to whole numbers, which is only safe if none were fractional).
 
 const NEED_MAX: int = 100000
-const NEED_NAMES: Array[String] = ["hunger", "rest", "company"]
+const NEED_NAMES: Array[String] = ["hunger", "rest", "company", "fun"]
 
 ## Where a person is.
 const AT_INSIDE: String = "inside"    # inside the building of place_id
@@ -29,7 +29,7 @@ static func new_person(id: String, given_name: String, family_name: String, birt
 		"schedule_id": "",
 		"workplace_id": "",          # building worked in, if the job is on the map; "" if away
 		"traits": [],
-		"needs": {"hunger": NEED_MAX, "rest": NEED_MAX, "company": NEED_MAX},
+		"needs": {"hunger": NEED_MAX, "rest": NEED_MAX, "company": NEED_MAX, "fun": NEED_MAX},
 		"at": AT_INSIDE,
 		"place_id": "",              # building when inside; "" otherwise
 		"spot": "",                  # room within that building's interior, if it has one
@@ -76,7 +76,8 @@ static func new_relationship(person_a: String, person_b: String) -> Dictionary:
 
 ## An action: something a person is doing or on the way to do.
 ##   kind      sleep, eat, work, school, be_home, sit_out, visit, go_to,
-##             call_on, talk, be_inside (inside an institution)
+##             call_on, talk, be_inside (inside an institution), pastime
+##             (at home), play (children, outdoors)
 ##   source    who chose it: schedule, need, idle, player, social
 ##   where     AT_INSIDE, AT_OUTSIDE or AT_OFFMAP: where it is carried out
 ##   place_id  the building or exit it happens at

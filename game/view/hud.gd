@@ -17,7 +17,7 @@ const SPEED_LABELS: Array[String] = ["Pause", "1 min/s", "10 min/s", "1 hour/s"]
 const FEED_LINES: int = 7
 ## How long a new line in the feed stays highlighted, in real milliseconds.
 const FEED_FRESH_MS: int = 5000
-const NEED_LABELS: Dictionary = {"hunger": "Fed", "rest": "Rested", "company": "Company"}
+const NEED_LABELS: Dictionary = {"hunger": "Fed", "rest": "Rested", "company": "Company", "fun": "Fun"}
 
 var simulation: Simulation
 var _clock_label: Label

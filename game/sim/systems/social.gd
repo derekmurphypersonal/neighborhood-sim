@@ -9,7 +9,7 @@ extends RefCounted
 const Records := preload("res://sim/state/records.gd")
 const Area := preload("res://sim/world/area.gd")
 
-const TALKABLE_OUTDOORS: Array[String] = ["sit_out", "visit", "go_to", "call_on", "wait"]
+const TALKABLE_OUTDOORS: Array[String] = ["sit_out", "visit", "go_to", "call_on", "play"]
 ## What people may be doing inside an institution when they fall into talk.
 const TALKABLE_INDOORS: Array[String] = ["be_inside", "work", "shop"]
 ## Actions taken up again after a conversation that interrupted them.

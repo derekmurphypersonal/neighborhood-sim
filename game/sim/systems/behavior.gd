@@ -12,9 +12,9 @@ const SimDate := preload("res://sim/clock/sim_date.gd")
 const MINUTES_PER_DAY: int = 1440
 ## The kind of room each action is carried out in, where the building has an
 ## interior. Actions not listed here have no particular room.
-const ROOM_FOR: Dictionary = {"eat": "kitchen", "sleep": "bedroom", "be_home": "living"}
+const ROOM_FOR: Dictionary = {"eat": "kitchen", "sleep": "bedroom", "be_home": "living", "pastime": "living"}
 ## What a person does when the player sends them to a room of a given kind.
-const ACTION_IN_ROOM: Dictionary = {"kitchen": "eat", "bedroom": "sleep", "living": "be_home"}
+const ACTION_IN_ROOM: Dictionary = {"kitchen": "eat", "bedroom": "sleep", "living": "pastime"}
 
 
 static func step(sim: RefCounted, person: Dictionary) -> void:
@@ -158,7 +158,12 @@ static func _choose(sim: RefCounted, person: Dictionary) -> Dictionary:
 	var outgoing: bool = (person["traits"] as Array).has("outgoing")
 	var homebody: bool = (person["traits"] as Array).has("homebody")
 
-	if not housebound and needs["company"] < int(tuning["company_threshold"]):
+	# Of company and fun, see to whichever is lower, if it is low enough.
+	var wants_company: bool = not housebound and needs["company"] < int(tuning["company_threshold"])
+	var wants_fun: bool = not housebound and needs["fun"] < int(tuning["fun_threshold"])
+	if wants_fun and (not wants_company or needs["fun"] <= needs["company"]):
+		return _amusement(sim, person, home, generator)
+	if wants_company:
 		if generator.randi_range(1, 100) <= int(tuning["visit_chance_percent"]):
 			var visit: Dictionary = _visit(sim, person, generator)
 			if not visit.is_empty():
@@ -188,6 +193,26 @@ static func _sit_out(sim: RefCounted, home: String, source: String, generator: R
 	action["ty"] = front[1]
 	action["minutes"] = generator.randi_range(int(sim.tuning["idle_min_minutes"]), int(sim.tuning["idle_max_minutes"]))
 	return action
+
+
+## Something enjoyable: children play outdoors in the daytime; everyone else,
+## and children after dark, take up a pastime at home.
+static func _amusement(sim: RefCounted, person: Dictionary, home: String, generator: RandomNumberGenerator) -> Dictionary:
+	var tuning: Dictionary = sim.tuning
+	var minutes: int = generator.randi_range(int(tuning["pastime_min_minutes"]), int(tuning["pastime_max_minutes"]))
+	var age: int = SimDate.age_on(person["birth_day"], sim.clock.day_index)
+	var minute: int = sim.clock.minute_of_day
+	var playtime: bool = minute >= int(tuning["play_from_minute"]) and minute < int(tuning["play_until_minute"])
+	if playtime and age >= int(tuning["play_min_age"]) and age <= int(tuning["play_max_age"]):
+		var play: Dictionary = Records.new_action("play", "need", Records.AT_OUTSIDE, home)
+		var front: Array = sim.area.front_of(home)
+		play["tx"] = front[0]
+		play["ty"] = front[1]
+		play["minutes"] = minutes
+		return play
+	var pastime: Dictionary = Records.new_action("pastime", "need", Records.AT_INSIDE, home)
+	pastime["minutes"] = minutes
+	return pastime
 
 
 ## With time to spare, a person may drop in at an institution that is open.

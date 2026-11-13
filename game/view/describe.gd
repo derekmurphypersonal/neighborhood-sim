@@ -22,6 +22,7 @@ static func activity(sim: RefCounted, person: Dictionary) -> String:
 			"call_on": return "Going to talk to " + given_name(sim, action["other_id"])
 			"visit": return "Going to call on a neighbor"
 			"sit_out": return "Stepping outside"
+			"play": return "Going out to play"
 			"go_to": return "Walking where you sent them"
 			"be_inside": return "Going to " + _place_name(sim, action["place_id"])
 		return "Heading home"
@@ -32,6 +33,8 @@ static func activity(sim: RefCounted, person: Dictionary) -> String:
 		"be_inside": return "In " + _place_name(sim, action["place_id"])
 		"school": return "Away at school"
 		"be_home": return "At home"
+		"pastime": return "Enjoying a pastime at home"
+		"play": return "Playing outside"
 		"sit_out": return "Sitting out front"
 		"visit": return "Calling at a neighbor's door"
 		"go_to": return "Waiting where you sent them"
