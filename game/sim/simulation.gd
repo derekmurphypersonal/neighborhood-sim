@@ -71,6 +71,7 @@ func _populate() -> void:
 			int(SimDate.parse_iso(source["birth_date"])), source["household_id"]
 		)
 		person["schedule_id"] = source["schedule_id"]
+		person["workplace_id"] = source.get("workplace_id", "")
 		person["traits"] = (source.get("traits", []) as Array).duplicate()
 		var home: String = state.households[person["household_id"]]["home_id"]
 		var door: Array = area.door_of(home)

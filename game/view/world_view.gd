@@ -36,6 +36,7 @@ const COLOR_WALL: Color = Color(0.86, 0.82, 0.70)
 const COLOR_WALL_SHADE: Color = Color(0.74, 0.70, 0.60)
 const COLOR_ROOF: Color = Color(0.58, 0.36, 0.30)
 const COLOR_HOME_ROOF: Color = Color(0.30, 0.42, 0.62)
+const COLOR_INSTITUTION_ROOF: Color = Color(0.36, 0.52, 0.38)
 const COLOR_OUTLINE: Color = Color(0.20, 0.20, 0.20)
 const COLOR_PLAYER: Color = Color(0.20, 0.38, 0.75)
 const COLOR_NEIGHBOR: Color = Color(0.78, 0.42, 0.18)
@@ -257,10 +258,21 @@ func _draw_building(building: Dictionary, is_home: bool, night: float) -> void:
 		var wall: PackedVector2Array = PackedVector2Array([base[index], base[next], top[next], top[index]])
 		draw_colored_polygon(wall, COLOR_WALL if (base[next] - base[index]).y < 0.0 else COLOR_WALL_SHADE)
 		draw_polyline(_closed(wall), COLOR_OUTLINE, 1.0)
-	draw_colored_polygon(top, COLOR_HOME_ROOF if is_home else COLOR_ROOF)
+	var roof: Color = COLOR_HOME_ROOF if is_home else COLOR_ROOF
+	if area.is_institution(building["id"]):
+		roof = COLOR_INSTITUTION_ROOF
+	draw_colored_polygon(top, roof)
 	draw_polyline(_closed(top), COLOR_OUTLINE, 1.0)
 
 	var inside: Array = _occupants(building["id"])
+	if area.is_institution(building["id"]):
+		var open: bool = area.is_open(building["id"], simulation.clock.weekday(), simulation.clock.minute_of_day)
+		var sign: String = "%s (%s)" % [area.institutions[building["id"]]["name"], "open" if open else "closed"]
+		var sign_at: Vector2 = Vector2.ZERO
+		for point: Vector2 in top:
+			sign_at += point
+		sign_at /= float(top.size())
+		draw_string(_font, sign_at + Vector2(-48, -8), sign, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
 	if not inside.is_empty():
 		var asleep: int = 0
 		for person: Dictionary in inside:

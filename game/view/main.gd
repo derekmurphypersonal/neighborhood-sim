@@ -148,6 +148,8 @@ func _on_building_clicked(building_id: String) -> void:
 	var household: Dictionary = simulation.state.households[simulation.state.people[selected_id]["household_id"]]
 	if building_id == household["home_id"]:
 		_give_order(selected_id, {"kind": "go_home"})
+	elif simulation.area.is_institution(building_id):
+		_give_order(selected_id, {"kind": "enter", "place_id": building_id})
 	else:
 		_give_order(selected_id, {"kind": "go_to", "place_id": building_id})
 

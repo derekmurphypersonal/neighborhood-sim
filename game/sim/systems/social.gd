@@ -58,6 +58,11 @@ static func _settle(sim: RefCounted, person: Dictionary, other: Dictionary, minu
 		"a": record["a"], "b": record["b"], "minutes": minutes,
 		"a_change": a_change, "b_change": b_change,
 		"first_meeting": record["familiarity"] == 1 and not record["kin"],
+		# Set when the two talked inside an institution; "" otherwise.
+		"place_id": person["place_id"] if (
+			person["at"] == Records.AT_INSIDE and other["at"] == Records.AT_INSIDE
+			and person["place_id"] == other["place_id"] and sim.area.is_institution(person["place_id"])
+		) else "",
 	})
 	record["history"].append(event_id)
 
@@ -184,6 +189,9 @@ static func _indoor_meetings(sim: RefCounted) -> void:
 		if person["at"] != Records.AT_INSIDE or action.is_empty() or not action["started"]:
 			continue
 		if not sim.area.is_institution(person["place_id"]) or not TALKABLE_INDOORS.has(action["kind"]):
+			continue
+		# No new conversations so close to closing time that they would run past it.
+		if not sim.area.is_open(person["place_id"], sim.clock.weekday(), sim.clock.minute_of_day + int(sim.tuning["talk_max_minutes"])):
 			continue
 		if not by_building.has(person["place_id"]):
 			by_building[person["place_id"]] = []

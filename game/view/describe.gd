@@ -23,11 +23,13 @@ static func activity(sim: RefCounted, person: Dictionary) -> String:
 			"visit": return "Going to call on a neighbor"
 			"sit_out": return "Stepping outside"
 			"go_to": return "Walking where you sent them"
+			"be_inside": return "Going to " + _place_name(sim, action["place_id"])
 		return "Heading home"
 	match kind:
 		"sleep": return "Asleep"
 		"eat": return "Having a meal"
-		"work": return "Away at work"
+		"work": return "At work in " + _place_name(sim, action["place_id"]) if person["workplace_id"] != "" else "Away at work"
+		"be_inside": return "In " + _place_name(sim, action["place_id"])
 		"school": return "Away at school"
 		"be_home": return "At home"
 		"sit_out": return "Sitting out front"
@@ -36,6 +38,12 @@ static func activity(sim: RefCounted, person: Dictionary) -> String:
 		"call_on": return "Looking for " + given_name(sim, action["other_id"])
 		"talk": return "Talking with " + given_name(sim, action["other_id"])
 	return kind
+
+
+static func _place_name(sim: RefCounted, building_id: String) -> String:
+	if sim.area.institutions.has(building_id):
+		return "the " + sim.area.institutions[building_id]["name"]
+	return "the " + str(sim.area.buildings[building_id]["label"]) if sim.area.buildings.has(building_id) else "work"
 
 
 static func event_time(event: Dictionary) -> String:
@@ -56,6 +64,8 @@ static func event(sim: RefCounted, entry: Dictionary) -> String:
 		"household_short_of_money":
 			return "The %s is short of money." % sim.state.households[entry["household_id"]]["name"]
 		"order_failed":
+			if entry.get("reason", "") == "closed":
+				return "%s found %s closed." % [given_name(sim, entry["person_id"]), _place_name(sim, entry["place_id"])]
 			return "%s could not find %s: away from the street." % [
 				given_name(sim, entry["person_id"]), given_name(sim, entry["other_id"]),
 			]

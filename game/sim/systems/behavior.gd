@@ -127,6 +127,11 @@ static func _choose(sim: RefCounted, person: Dictionary) -> Dictionary:
 		return sleep
 
 	var away: Dictionary = away_now(sim, plan)
+	if not away.is_empty() and person["workplace_id"] != "":
+		# A job on the street itself: go to the workplace and stay for the shift.
+		var shift: Dictionary = Records.new_action(away["kind"], "schedule", Records.AT_INSIDE, person["workplace_id"])
+		shift["until"] = now - minute + int(away["back"])
+		return shift
 	if not away.is_empty():
 		var exit_id: String = sim.area.nearest_exit(sim.area.front_of(home))
 		var leave: Dictionary = Records.new_action(away["kind"], "schedule", Records.AT_OFFMAP, exit_id)
@@ -165,6 +170,10 @@ static func _choose(sim: RefCounted, person: Dictionary) -> Dictionary:
 		outdoors_chance += int(tuning["trait_outdoors_shift"])
 	if homebody:
 		outdoors_chance -= int(tuning["trait_outdoors_shift"])
+	if not housebound:
+		var drop_in: Dictionary = _drop_in(sim, generator)
+		if not drop_in.is_empty():
+			return drop_in
 	if not housebound and generator.randi_range(1, 100) <= outdoors_chance:
 		return _sit_out(sim, home, "idle", generator)
 	var be_home: Dictionary = Records.new_action("be_home", "idle", Records.AT_INSIDE, home)
@@ -178,6 +187,22 @@ static func _sit_out(sim: RefCounted, home: String, source: String, generator: R
 	action["tx"] = front[0]
 	action["ty"] = front[1]
 	action["minutes"] = generator.randi_range(int(sim.tuning["idle_min_minutes"]), int(sim.tuning["idle_max_minutes"]))
+	return action
+
+
+## With time to spare, a person may drop in at an institution that is open.
+static func _drop_in(sim: RefCounted, generator: RandomNumberGenerator) -> Dictionary:
+	var open_now: Array = []
+	var ids: Array = sim.area.institutions.keys()
+	ids.sort()
+	for building_id: String in ids:
+		if sim.area.is_open(building_id, sim.clock.weekday(), sim.clock.minute_of_day):
+			open_now.append(building_id)
+	if open_now.is_empty() or generator.randi_range(1, 100) > int(sim.tuning["idle_drop_in_percent"]):
+		return {}
+	var target: String = open_now[generator.randi_range(0, open_now.size() - 1)]
+	var action: Dictionary = Records.new_action("be_inside", "idle", Records.AT_INSIDE, target)
+	action["minutes"] = generator.randi_range(int(sim.tuning["drop_in_min_minutes"]), int(sim.tuning["drop_in_max_minutes"]))
 	return action
 
 

@@ -28,8 +28,8 @@ static func step(sim: RefCounted, person: Dictionary) -> void:
 			# The very young are cared for at home and do not go looking for company.
 			needs["company"] -= int(tuning["company_loss_alone"])
 
-	# People who are away at work or school get a midday meal there.
-	if person["at"] == Records.AT_OFFMAP:
+	# People at work or school get a midday meal there, on the street or off it.
+	if doing == "work" or doing == "school":
 		needs["hunger"] = maxi(needs["hunger"], int(tuning["hunger_floor_away"]))
 
 	for need_name: String in Records.NEED_NAMES:

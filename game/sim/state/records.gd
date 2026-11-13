@@ -27,6 +27,7 @@ static func new_person(id: String, given_name: String, family_name: String, birt
 		"birth_day": birth_day,      # day index; age is always computed from it
 		"household_id": household_id,
 		"schedule_id": "",
+		"workplace_id": "",          # building worked in, if the job is on the map; "" if away
 		"traits": [],
 		"needs": {"hunger": NEED_MAX, "rest": NEED_MAX, "company": NEED_MAX},
 		"at": AT_INSIDE,

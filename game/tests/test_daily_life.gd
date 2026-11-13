@@ -35,7 +35,8 @@ func test_workers_and_pupils_are_away_on_weekdays_only() -> void:
 	for person_id: String in simulation.state.sorted_person_ids():
 		var person: Dictionary = simulation.state.people[person_id]
 		var has_away: bool = simulation.world["schedules"][person["schedule_id"]]["days"]["weekday"].has("away")
-		check_eq(person["at"] == Records.AT_OFFMAP, has_away, person["given_name"] + " on Tuesday morning")
+		var away_from_street: bool = has_away and person["workplace_id"] == ""
+		check_eq(person["at"] == Records.AT_OFFMAP, away_from_street, person["given_name"] + " on Tuesday morning")
 	_run_until(simulation, 1950, 4, 9, 630)  # Sunday 10:30
 	for person_id: String in simulation.state.sorted_person_ids():
 		var person: Dictionary = simulation.state.people[person_id]
@@ -56,6 +57,8 @@ func test_saturday_is_different() -> void:
 		match person["schedule_id"]:
 			"sched_shift":
 				check_eq(_away_kind(simulation, person), "work", person["given_name"] + " works Saturday morning")
+			"sched_storekeeper":
+				check_eq(_doing(person), "work", person["given_name"] + " keeps the store on Saturday")
 			_:
 				check(person["at"] != Records.AT_OFFMAP, person["given_name"] + " is in the neighborhood on Saturday morning")
 	_run_until(simulation, 1950, 4, 8, 840)  # Saturday 14:00
@@ -81,6 +84,42 @@ func test_sunday_is_different() -> void:
 		if _doing(person) == "eat" and person["place_id"] == home:
 			at_dinner += 1
 	check(at_dinner >= simulation.state.people.size() - 3, "nearly everyone is at Sunday dinner at home (%d of %d)" % [at_dinner, simulation.state.people.size()])
+
+
+## The street's one institution: a fictional store with a storekeeper.
+func test_the_store_is_staffed_and_visited() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	var store: String = simulation.area.institution_of_kind("store")
+	check(store != "", "the street has a store")
+	check_eq(simulation.area.institutions.size(), 1, "and it is the only institution")
+	var keeper: Dictionary = {}
+	for person_id: String in simulation.state.sorted_person_ids():
+		if simulation.state.people[person_id]["workplace_id"] == store:
+			keeper = simulation.state.people[person_id]
+	check(not keeper.is_empty(), "someone works there")
+	var visitors: Dictionary = {}
+	var keeper_in_at_ten: bool = false
+	var anyone_in_when_closed: bool = false
+	while simulation.clock.day_index < 99:  # through Sunday 9 April
+		simulation.tick()
+		var open: bool = simulation.area.is_open(store, simulation.clock.weekday(), simulation.clock.minute_of_day)
+		if simulation.clock.day_index == 93 and simulation.clock.minute_of_day == 600:
+			keeper_in_at_ten = keeper["at"] == Records.AT_INSIDE and keeper["place_id"] == store and _doing(keeper) == "work"
+		for person_id: String in simulation.state.sorted_person_ids():
+			var person: Dictionary = simulation.state.people[person_id]
+			if person["at"] == Records.AT_INSIDE and person["place_id"] == store and person["id"] != keeper["id"]:
+				visitors[person_id] = true
+				# Two minutes' grace to get out of the door at closing time.
+				if not open and not simulation.area.is_open(store, simulation.clock.weekday(), maxi(simulation.clock.minute_of_day - 2, 0)):
+					anyone_in_when_closed = true
+	check(keeper_in_at_ten, "the storekeeper is at work in the store on Tuesday at 10:00, not off the map")
+	check(visitors.size() >= 3, "several residents went into the store during the week (%d did)" % visitors.size())
+	check(not anyone_in_when_closed, "no visitor was inside while it was closed")
+	var talked_inside: int = 0
+	for event: Dictionary in simulation.state.event_log:
+		if event["type"] == "conversation" and event["place_id"] == store:
+			talked_inside += 1
+	check(talked_inside >= 1, "people talked inside the store (%d conversations)" % talked_inside)
 
 
 func test_weekday_mornings_start_early() -> void:

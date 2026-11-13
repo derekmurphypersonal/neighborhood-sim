@@ -18,6 +18,7 @@
     {"id": "fx_lot_5", "type": "lot", "boundary": [[120, -120], [180, -120], [180, -20], [120, -20]], "provenance": {"status": "placeholder"}},
     {"id": "fx_bd_5", "type": "building", "lot_id": "fx_lot_5", "label": "Fixture house 5", "building_type": "single-family", "stories": 2, "footprint": [[135, -85], [165, -85], [165, -45], [135, -45]], "provenance": {"status": "placeholder"}},
     {"id": "fx_lot_6", "type": "lot", "boundary": [[210, -120], [270, -120], [270, -20], [210, -20]], "provenance": {"status": "placeholder"}},
-    {"id": "fx_bd_6", "type": "building", "lot_id": "fx_lot_6", "label": "Fixture house 6", "building_type": "two-family", "stories": 2, "footprint": [[225, -85], [255, -85], [255, -45], [225, -45]], "provenance": {"status": "placeholder"}}
+    {"id": "fx_bd_6", "type": "building", "lot_id": "fx_lot_6", "label": "Fixture Store", "building_type": "store", "stories": 2, "footprint": [[225, -85], [255, -85], [255, -45], [225, -45]], "provenance": {"status": "placeholder"}},
+    {"id": "fx_in_store", "type": "institution", "building_id": "fx_bd_6", "name": "Fixture Store", "kind": "store", "hours": {"weekday": [480, 1080], "saturday": [480, 1080], "sunday": null}, "provenance": {"status": "placeholder"}}
   ]
 }

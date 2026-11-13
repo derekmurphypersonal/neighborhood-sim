@@ -138,6 +138,8 @@ static func _check_references(world: Dictionary) -> void:
 	for person: Dictionary in world["persons"]:
 		if not household_ids.has(person["household_id"]):
 			world["errors"].append("Person %s belongs to unknown household %s." % [person["id"], person["household_id"]])
+		if person.get("workplace_id", "") != "" and not area.buildings.has(person["workplace_id"]):
+			world["errors"].append("Person %s works in unknown building %s." % [person["id"], person["workplace_id"]])
 		if not world["schedules"].has(person["schedule_id"]):
 			world["errors"].append("Person %s has unknown schedule %s." % [person["id"], person["schedule_id"]])
 	if area.streets.is_empty():
