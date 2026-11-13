@@ -143,6 +143,8 @@ func _on_day_start() -> void:
 ##   {"kind": "go_home"}
 ##   {"kind": "go_to", "place_id": <building id>}
 ##   {"kind": "talk_to", "other_id": <person id>}
+##   {"kind": "enter", "place_id": <institution building id>}
+##   {"kind": "use_room", "room_id": <room in the person's own home>}
 func give_order(person_id: String, order: Dictionary) -> String:
 	if not state.people.has(person_id):
 		return "No such person."
@@ -157,6 +159,13 @@ func give_order(person_id: String, order: Dictionary) -> String:
 		"go_to":
 			if not area.buildings.has(order.get("place_id", "")):
 				return "No such place."
+		"enter":
+			if not area.is_institution(order.get("place_id", "")):
+				return "That is not a place you can go into."
+		"use_room":
+			var home: String = state.households[person["household_id"]]["home_id"]
+			if not area.has_interior(home) or not area.interiors[home]["rooms"].has(order.get("room_id", "")):
+				return "No such room at home."
 		"talk_to":
 			if not state.people.has(order.get("other_id", "")) or order["other_id"] == person_id:
 				return "No such person to talk to."

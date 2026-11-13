@@ -10,12 +10,20 @@ const Records := preload("res://sim/state/records.gd")
 const SimDate := preload("res://sim/clock/sim_date.gd")
 
 const MINUTES_PER_DAY: int = 1440
+## The kind of room each action is carried out in, where the building has an
+## interior. Actions not listed here have no particular room.
+const ROOM_FOR: Dictionary = {"eat": "kitchen", "sleep": "bedroom", "be_home": "living"}
+## What a person does when the player sends them to a room of a given kind.
+const ACTION_IN_ROOM: Dictionary = {"kitchen": "eat", "bedroom": "sleep", "living": "be_home"}
 
 
 static func step(sim: RefCounted, person: Dictionary) -> void:
 	_give_way(sim, person)
 	if person["action"].is_empty():
-		person["action"] = _choose(sim, person)
+		var chosen: Dictionary = _choose(sim, person)
+		if chosen["room_kind"] == "":
+			chosen["room_kind"] = ROOM_FOR.get(chosen["kind"], "")
+		person["action"] = chosen
 	var action: Dictionary = person["action"]
 	if not action["started"]:
 		_travel(sim, person, action)
@@ -29,16 +37,9 @@ static func schedule_of(sim: RefCounted, person: Dictionary) -> Dictionary:
 	return sim.world["schedules"][person["schedule_id"]]
 
 
-## Which kind of day a weekday number is (0 = Sunday ... 6 = Saturday).
-static func day_kind(weekday: int) -> String:
-	if weekday == 0:
-		return "sunday"
-	return "saturday" if weekday == 6 else "weekday"
-
-
 ## A person's timetable for a given weekday: {wake, bed, away?, meals?}.
 static func plan_for(sim: RefCounted, person: Dictionary, weekday: int) -> Dictionary:
-	return schedule_of(sim, person)["days"][day_kind(weekday)]
+	return schedule_of(sim, person)["days"][SimDate.day_kind(weekday)]
 
 
 static func plan_today(sim: RefCounted, person: Dictionary) -> Dictionary:
@@ -78,6 +79,11 @@ static func set_meal_due(sim: RefCounted, person: Dictionary, plan: Dictionary) 
 static func _give_way(sim: RefCounted, person: Dictionary) -> void:
 	var action: Dictionary = person["action"]
 	if action.is_empty() or action["kind"] == "talk":
+		return
+	# Visitors leave an institution when it closes; staff finish their shift.
+	if action["where"] == Records.AT_INSIDE and action["kind"] != "work" and sim.area.is_institution(action["place_id"]) \
+			and not sim.area.is_open(action["place_id"], sim.clock.weekday(), sim.clock.minute_of_day):
+		person["action"] = {}
 		return
 	if not person["orders"].is_empty() and action["source"] != "player" and person["at"] != Records.AT_OFFMAP:
 		person["action"] = {}
@@ -205,6 +211,21 @@ static func _from_order(sim: RefCounted, person: Dictionary, order: Dictionary, 
 			go["ty"] = front[1]
 			go["minutes"] = int(sim.tuning["order_stay_minutes"])
 			return go
+		"enter":
+			if not sim.area.is_open(order["place_id"], sim.clock.weekday(), sim.clock.minute_of_day):
+				sim.state.log_event(sim.clock.day_index, sim.clock.minute_of_day, "order_failed", 1, {
+					"person_id": person["id"], "place_id": order["place_id"], "reason": "closed",
+				})
+				return {}
+			var inside: Dictionary = Records.new_action("be_inside", "player", Records.AT_INSIDE, order["place_id"])
+			inside["minutes"] = int(sim.tuning["order_stay_minutes"])
+			return inside
+		"use_room":
+			var kind: String = sim.area.interiors[home]["rooms"][order["room_id"]]["kind"]
+			var use: Dictionary = Records.new_action(ACTION_IN_ROOM.get(kind, "be_home"), "player", Records.AT_INSIDE, home)
+			use["room_kind"] = kind
+			use["minutes"] = int(sim.tuning["order_stay_minutes"])
+			return use
 		"talk_to":
 			var other: Dictionary = sim.state.people[order["other_id"]]
 			var call: Dictionary = Records.new_action("call_on", "player", Records.AT_OUTSIDE, "")
@@ -249,6 +270,7 @@ static func _travel(sim: RefCounted, person: Dictionary, action: Dictionary) -> 
 			var door: Array = sim.area.door_of(from_building)
 			person["at"] = Records.AT_OUTSIDE
 			person["place_id"] = ""
+			person["spot"] = ""
 			person["x"] = door[0]
 			person["y"] = door[1]
 
@@ -283,6 +305,7 @@ static func _arrive(sim: RefCounted, person: Dictionary, action: Dictionary) -> 
 		Records.AT_INSIDE:
 			person["at"] = Records.AT_INSIDE
 			person["place_id"] = action["place_id"]
+			person["spot"] = sim.area.room_of_kind(action["place_id"], action["room_kind"])
 		Records.AT_OFFMAP:
 			person["at"] = Records.AT_OFFMAP
 			person["place_id"] = ""

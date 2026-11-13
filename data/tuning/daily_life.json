@@ -31,6 +31,7 @@
     {"id": "talk_cooldown_minutes", "value": 180, "label": "gameplay_tuned", "note": "Time before the same two people talk again unprompted."},
     {"id": "talk_reach_inches", "value": 600, "label": "gameplay_tuned", "note": "How close two people outdoors must be to talk: 50 feet."},
     {"id": "street_talk_chance_percent", "value": 10, "label": "gameplay_tuned", "note": "Chance per minute that two people in reach start talking."},
+    {"id": "indoor_talk_chance_percent", "value": 15, "label": "gameplay_tuned", "note": "Chance per minute that two people inside the same shop or institution start talking."},
     {"id": "talk_change_min", "value": -2, "label": "gameplay_tuned", "note": "Least a conversation can change regard."},
     {"id": "talk_change_max", "value": 6, "label": "gameplay_tuned", "note": "Most a conversation can change regard."},
     {"id": "trait_warm_bonus", "value": 2, "label": "gameplay_tuned", "note": "Extra regard earned by a 'warm' person."},

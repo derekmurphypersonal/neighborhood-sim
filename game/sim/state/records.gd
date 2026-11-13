@@ -31,6 +31,7 @@ static func new_person(id: String, given_name: String, family_name: String, birt
 		"needs": {"hunger": NEED_MAX, "rest": NEED_MAX, "company": NEED_MAX},
 		"at": AT_INSIDE,
 		"place_id": "",              # building when inside; "" otherwise
+		"spot": "",                  # room within that building's interior, if it has one
 		"x": 0,                      # inches; meaningful when outside
 		"y": 0,
 		"last_set_meal_day": -1,     # day index of the last fixed household meal attended
@@ -74,7 +75,7 @@ static func new_relationship(person_a: String, person_b: String) -> Dictionary:
 
 ## An action: something a person is doing or on the way to do.
 ##   kind      sleep, eat, work, school, be_home, sit_out, visit, go_to,
-##             call_on, talk, wait
+##             call_on, talk, be_inside (inside an institution)
 ##   source    who chose it: schedule, need, idle, player, social
 ##   where     AT_INSIDE, AT_OUTSIDE or AT_OFFMAP: where it is carried out
 ##   place_id  the building or exit it happens at
@@ -99,4 +100,6 @@ static func new_action(kind: String, source: String, where: String, place_id: St
 		"minutes": 0,
 		"until": -1,
 		"other_id": "",
+		"room_kind": "",             # kind of room it is done in, where the building has an interior
+		"resume": {},                # for a conversation: the action it interrupted, to be taken up again
 	}

@@ -10,6 +10,10 @@ const Records := preload("res://sim/state/records.gd")
 const Area := preload("res://sim/world/area.gd")
 
 const TALKABLE_OUTDOORS: Array[String] = ["sit_out", "visit", "go_to", "call_on", "wait"]
+## What people may be doing inside an institution when they fall into talk.
+const TALKABLE_INDOORS: Array[String] = ["be_inside", "work", "shop"]
+## Actions taken up again after a conversation that interrupted them.
+const RESUMED_AFTER_TALK: Array[String] = ["be_inside", "work", "shop", "go_to"]
 const NOT_AT_THE_DOOR: Array[String] = ["sleep", "talk"]
 
 
@@ -17,6 +21,7 @@ static func step(sim: RefCounted) -> void:
 	_finish_conversations(sim)
 	_door_calls(sim)
 	_street_meetings(sim)
+	_indoor_meetings(sim)
 
 
 static func _finish_conversations(sim: RefCounted) -> void:
@@ -31,8 +36,11 @@ static func _finish_conversations(sim: RefCounted) -> void:
 			continue  # the pair is settled once, from the lower ID
 		var other: Dictionary = sim.state.people[other_id]
 		_settle(sim, person, other, action["minutes"])
-		person["action"] = {}
-		other["action"] = {}
+		for talker: Dictionary in [person, other]:
+			var resume: Dictionary = talker["action"]["resume"]
+			if not resume.is_empty() and resume["until"] < 0:
+				resume["ends_at"] += action["minutes"]  # the talk did not count toward it
+			talker["action"] = resume
 
 
 static func _settle(sim: RefCounted, person: Dictionary, other: Dictionary, minutes: int) -> void:
@@ -80,6 +88,9 @@ static func _begin(sim: RefCounted, person: Dictionary, other: Dictionary) -> vo
 		talk["minutes"] = minutes
 		talk["ends_at"] = ends_at
 		talk["other_id"] = pair[1]["id"]
+		var interrupted: Dictionary = pair[0]["action"]
+		if not interrupted.is_empty() and interrupted["started"] and RESUMED_AFTER_TALK.has(interrupted["kind"]):
+			talk["resume"] = interrupted
 		pair[0]["action"] = talk
 
 
@@ -162,3 +173,39 @@ static func _street_meetings(sim: RefCounted) -> void:
 			busy[person["id"]] = true
 			busy[other["id"]] = true
 			break
+
+
+## People inside the same institution (staff and visitors) may talk.
+static func _indoor_meetings(sim: RefCounted) -> void:
+	var by_building: Dictionary = {}
+	for person_id: String in sim.state.sorted_person_ids():
+		var person: Dictionary = sim.state.people[person_id]
+		var action: Dictionary = person["action"]
+		if person["at"] != Records.AT_INSIDE or action.is_empty() or not action["started"]:
+			continue
+		if not sim.area.is_institution(person["place_id"]) or not TALKABLE_INDOORS.has(action["kind"]):
+			continue
+		if not by_building.has(person["place_id"]):
+			by_building[person["place_id"]] = []
+		by_building[person["place_id"]].append(person)
+	var generator: RandomNumberGenerator = sim.rng.stream("social")
+	var chance: int = int(sim.tuning["indoor_talk_chance_percent"])
+	var buildings: Array = by_building.keys()
+	buildings.sort()
+	for building_id: String in buildings:
+		var present: Array = by_building[building_id]
+		var busy: Dictionary = {}
+		for i: int in present.size():
+			if busy.has(present[i]["id"]):
+				continue
+			for j: int in range(i + 1, present.size()):
+				var person: Dictionary = present[i]
+				var other: Dictionary = present[j]
+				if busy.has(other["id"]) or other["household_id"] == person["household_id"]:
+					continue
+				if not _can_talk(sim, person, other, false) or generator.randi_range(1, 100) > chance:
+					continue
+				_begin(sim, person, other)
+				busy[person["id"]] = true
+				busy[other["id"]] = true
+				break

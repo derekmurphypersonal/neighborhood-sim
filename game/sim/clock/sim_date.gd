@@ -69,6 +69,13 @@ static func weekday(day_index: int) -> int:
 	return ((day_index % 7) + 7) % 7
 
 
+## Which kind of day a weekday number is: "weekday", "saturday" or "sunday".
+static func day_kind(weekday_number: int) -> String:
+	if weekday_number == 0:
+		return "sunday"
+	return "saturday" if weekday_number == 6 else "weekday"
+
+
 static func weekday_name(day_index: int) -> String:
 	return WEEKDAY_NAMES[weekday(day_index)]
 

@@ -10,6 +10,8 @@ extends RefCounted
 ## "front" (on the edge of that street). They are walking aids, not
 ## historical claims.
 
+const SimDate := preload("res://sim/clock/sim_date.gd")
+
 const INCHES_PER_FOOT: int = 12
 
 var id: String = ""
@@ -21,6 +23,13 @@ var streets: Dictionary = {}    # id -> {id, name, centerline: [[x, y], ...], wi
 var lots: Dictionary = {}       # id -> {id, boundary: [[x, y], ...]}
 var buildings: Dictionary = {}  # id -> {id, lot_id, footprint, stories, building_type, label, door, front}
 var exits: Dictionary = {}      # id -> {id, point: [x, y]}
+## building_id -> {id, building_id, name, kind, hours: {weekday, saturday, sunday}}.
+## A building people other than its household may enter during opening hours.
+## Each day's hours are [open, close] in minutes after midnight, or null if closed.
+var institutions: Dictionary = {}
+## building_id -> {module_id, name, rooms: {room_id: {id, name, kind, rect}}}.
+## Interiors are always fictional floor plans (D-032); rect is [x, y, w, h] in inches.
+var interiors: Dictionary = {}
 
 
 func sorted_building_ids() -> Array:
@@ -76,6 +85,73 @@ func route(from_building: String, to_building: String, to_point: Array) -> Array
 	return path
 
 
+# --- Institutions and interiors ----------------------------------------------
+
+func is_institution(building_id: String) -> bool:
+	return institutions.has(building_id)
+
+
+## True if the institution in this building is open at the given time.
+func is_open(building_id: String, weekday_number: int, minute: int) -> bool:
+	if not institutions.has(building_id):
+		return false
+	var hours: Variant = institutions[building_id]["hours"].get(SimDate.day_kind(weekday_number))
+	if typeof(hours) != TYPE_ARRAY or (hours as Array).size() != 2:
+		return false
+	return minute >= int(hours[0]) and minute < int(hours[1])
+
+
+## The first institution of a kind, by building ID ("" if there is none).
+func institution_of_kind(kind: String) -> String:
+	var ids: Array = institutions.keys()
+	ids.sort()
+	for building_id: String in ids:
+		if institutions[building_id]["kind"] == kind:
+			return building_id
+	return ""
+
+
+## Gives a building a fictional interior from a floor-plan module. Room
+## rectangles in the module are in feet from the footprint's south-west
+## corner; they are stored in world inches.
+func set_interior(building_id: String, module: Dictionary) -> void:
+	var footprint: Array = buildings[building_id]["footprint"]
+	var min_x: int = int(footprint[0][0])
+	var min_y: int = int(footprint[0][1])
+	for point: Array in footprint:
+		min_x = mini(min_x, int(point[0]))
+		min_y = mini(min_y, int(point[1]))
+	var rooms: Dictionary = {}
+	for room: Dictionary in module["rooms"]:
+		var rect: Array = room["rect_ft"]
+		rooms[room["id"]] = {
+			"id": room["id"],
+			"name": room.get("name", room["id"]),
+			"kind": room.get("kind", ""),
+			"rect": [
+				min_x + roundi(float(rect[0]) * INCHES_PER_FOOT), min_y + roundi(float(rect[1]) * INCHES_PER_FOOT),
+				roundi(float(rect[2]) * INCHES_PER_FOOT), roundi(float(rect[3]) * INCHES_PER_FOOT),
+			],
+		}
+	interiors[building_id] = {"module_id": module["id"], "name": module.get("name", ""), "rooms": rooms}
+
+
+func has_interior(building_id: String) -> bool:
+	return interiors.has(building_id)
+
+
+## The room of a kind in a building's interior ("" if it has none).
+func room_of_kind(building_id: String, kind: String) -> String:
+	if kind == "" or not interiors.has(building_id):
+		return ""
+	var ids: Array = interiors[building_id]["rooms"].keys()
+	ids.sort()
+	for room_id: String in ids:
+		if interiors[building_id]["rooms"][room_id]["kind"] == kind:
+			return room_id
+	return ""
+
+
 # --- Construction from data -------------------------------------------------
 
 static func _to_inches(point: Array) -> Array:
@@ -109,6 +185,16 @@ func add_record(record: Dictionary) -> void:
 				"stories": int(record.get("stories", 1)),
 				"building_type": record.get("building_type", ""),
 				"label": record.get("label", ""),
+				"provenance": record.get("provenance", {}),
+			}
+		"institution":
+			institutions[record["building_id"]] = {
+				"id": record["id"],
+				"building_id": record["building_id"],
+				"name": record.get("name", ""),
+				"kind": record.get("kind", ""),
+				"hours": record.get("hours", {}),
+				"provenance": record.get("provenance", {}),
 			}
 		"exit":
 			exits[record["id"]] = {"id": record["id"], "point": _to_inches(record["point"])}
