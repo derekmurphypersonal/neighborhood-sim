@@ -34,12 +34,63 @@ func test_workers_and_pupils_are_away_on_weekdays_only() -> void:
 	_run_until(simulation, 1950, 4, 4, 630)  # Tuesday 10:30
 	for person_id: String in simulation.state.sorted_person_ids():
 		var person: Dictionary = simulation.state.people[person_id]
-		var has_away: bool = simulation.world["schedules"][person["schedule_id"]].has("away")
+		var has_away: bool = simulation.world["schedules"][person["schedule_id"]]["days"]["weekday"].has("away")
 		check_eq(person["at"] == Records.AT_OFFMAP, has_away, person["given_name"] + " on Tuesday morning")
 	_run_until(simulation, 1950, 4, 9, 630)  # Sunday 10:30
 	for person_id: String in simulation.state.sorted_person_ids():
 		var person: Dictionary = simulation.state.people[person_id]
 		check(person["at"] != Records.AT_OFFMAP, person["given_name"] + " is in the neighborhood on Sunday")
+
+
+func _away_kind(simulation: Simulation, person: Dictionary) -> String:
+	return person["action"]["kind"] if person["at"] == Records.AT_OFFMAP else ""
+
+
+## Saturday: no school, most workers at home, shift workers away in the morning.
+func test_saturday_is_different() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	_run_until(simulation, 1950, 4, 8, 600)  # Saturday 10:00
+	check_eq(simulation.clock.weekday(), 6, "it is Saturday")
+	for person_id: String in simulation.state.sorted_person_ids():
+		var person: Dictionary = simulation.state.people[person_id]
+		match person["schedule_id"]:
+			"sched_shift":
+				check_eq(_away_kind(simulation, person), "work", person["given_name"] + " works Saturday morning")
+			_:
+				check(person["at"] != Records.AT_OFFMAP, person["given_name"] + " is in the neighborhood on Saturday morning")
+	_run_until(simulation, 1950, 4, 8, 840)  # Saturday 14:00
+	for person_id: String in simulation.state.sorted_person_ids():
+		check(simulation.state.people[person_id]["at"] != Records.AT_OFFMAP, "everyone is back by Saturday afternoon")
+
+
+## Sunday: a later start, nobody away, and a midday dinner at home.
+func test_sunday_is_different() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	_run_until(simulation, 1950, 4, 9, 430)  # Sunday 07:10
+	var asleep: int = 0
+	for person_id: String in simulation.state.sorted_person_ids():
+		if _doing(simulation.state.people[person_id]) == "sleep":
+			asleep += 1
+	check_eq(asleep, simulation.state.people.size(), "everyone sleeps in on Sunday (all are up by 07:10 on a weekday)")
+	_run_until(simulation, 1950, 4, 9, 800)  # Sunday 13:20
+	var at_dinner: int = 0
+	for person_id: String in simulation.state.sorted_person_ids():
+		var person: Dictionary = simulation.state.people[person_id]
+		var home: String = simulation.state.households[person["household_id"]]["home_id"]
+		check(person["at"] != Records.AT_OFFMAP, person["given_name"] + " is not away on Sunday")
+		if _doing(person) == "eat" and person["place_id"] == home:
+			at_dinner += 1
+	check(at_dinner >= simulation.state.people.size() - 3, "nearly everyone is at Sunday dinner at home (%d of %d)" % [at_dinner, simulation.state.people.size()])
+
+
+func test_weekday_mornings_start_early() -> void:
+	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1950)
+	_run_until(simulation, 1950, 4, 4, 430)  # Tuesday 07:10
+	var asleep: int = 0
+	for person_id: String in simulation.state.sorted_person_ids():
+		if _doing(simulation.state.people[person_id]) == "sleep":
+			asleep += 1
+	check_eq(asleep, 0, "everyone is up by 07:10 on a weekday")
 
 
 func test_residents_look_after_themselves() -> void:

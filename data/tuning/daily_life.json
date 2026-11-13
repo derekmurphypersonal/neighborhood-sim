@@ -12,6 +12,8 @@
     {"id": "hunger_gain_eating", "value": 3400, "label": "gameplay_tuned", "note": "Hunger regained per minute at a meal."},
     {"id": "hunger_threshold", "value": 40000, "label": "gameplay_tuned", "note": "Below this a person goes to eat."},
     {"id": "hunger_floor_away", "value": 60000, "label": "gameplay_tuned", "note": "People away at work or school eat there; hunger does not fall below this."},
+    {"id": "set_meal_minutes", "value": 45, "label": "gameplay_tuned", "note": "Length of a fixed household meal such as Sunday dinner."},
+    {"id": "set_meal_window_minutes", "value": 20, "label": "gameplay_tuned", "note": "How long after a fixed mealtime a person will still sit down to it."},
     {"id": "meal_minutes", "value": 30, "label": "gameplay_tuned", "note": "Length of a meal."},
     {"id": "company_loss_alone", "value": 120, "label": "gameplay_tuned", "note": "Company lost per minute when not talking."},
     {"id": "company_gain_talking", "value": 2500, "label": "gameplay_tuned", "note": "Company regained per minute of conversation."},

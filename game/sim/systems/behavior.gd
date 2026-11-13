@@ -29,21 +29,47 @@ static func schedule_of(sim: RefCounted, person: Dictionary) -> Dictionary:
 	return sim.world["schedules"][person["schedule_id"]]
 
 
-static func is_sleep_time(schedule: Dictionary, minute: int) -> bool:
-	return minute >= int(schedule["bed"]) or minute < int(schedule["wake"])
+## Which kind of day a weekday number is (0 = Sunday ... 6 = Saturday).
+static func day_kind(weekday: int) -> String:
+	if weekday == 0:
+		return "sunday"
+	return "saturday" if weekday == 6 else "weekday"
+
+
+## A person's timetable for a given weekday: {wake, bed, away?, meals?}.
+static func plan_for(sim: RefCounted, person: Dictionary, weekday: int) -> Dictionary:
+	return schedule_of(sim, person)["days"][day_kind(weekday)]
+
+
+static func plan_today(sim: RefCounted, person: Dictionary) -> Dictionary:
+	return plan_for(sim, person, sim.clock.weekday())
+
+
+static func is_sleep_time(plan: Dictionary, minute: int) -> bool:
+	return minute >= int(plan["bed"]) or minute < int(plan["wake"])
 
 
 ## The away period (work or school) in force right now, or {}.
-static func away_now(sim: RefCounted, schedule: Dictionary) -> Dictionary:
-	if not schedule.has("away"):
+static func away_now(sim: RefCounted, plan: Dictionary) -> Dictionary:
+	if not plan.has("away"):
 		return {}
-	var away: Dictionary = schedule["away"]
+	var away: Dictionary = plan["away"]
 	var minute: int = sim.clock.minute_of_day
-	if not (away["days"] as Array).has(sim.clock.weekday()):
-		return {}
 	if minute >= int(away["leave"]) and minute < int(away["back"]):
 		return away
 	return {}
+
+
+## True if a fixed household mealtime is under way and this person has not
+## yet sat down to it today.
+static func set_meal_due(sim: RefCounted, person: Dictionary, plan: Dictionary) -> bool:
+	if person["last_set_meal_day"] == sim.clock.day_index:
+		return false
+	var minute: int = sim.clock.minute_of_day
+	for meal: int in plan.get("meals", []):
+		if minute >= meal and minute < meal + int(sim.tuning["set_meal_window_minutes"]):
+			return true
+	return false
 
 
 # --- Giving way --------------------------------------------------------------
@@ -57,8 +83,9 @@ static func _give_way(sim: RefCounted, person: Dictionary) -> void:
 		person["action"] = {}
 		return
 	if action["source"] == "need" or action["source"] == "idle":
-		var schedule: Dictionary = schedule_of(sim, person)
-		if is_sleep_time(schedule, sim.clock.minute_of_day) or not away_now(sim, schedule).is_empty():
+		var plan: Dictionary = plan_today(sim, person)
+		if is_sleep_time(plan, sim.clock.minute_of_day) or not away_now(sim, plan).is_empty() \
+				or set_meal_due(sim, person, plan):
 			# Finish a meal already started; otherwise the timetable wins.
 			if not (action["kind"] == "eat" and action["started"]):
 				person["action"] = {}
@@ -72,6 +99,7 @@ static func _choose(sim: RefCounted, person: Dictionary) -> Dictionary:
 	var household: Dictionary = sim.state.households[person["household_id"]]
 	var home: String = household["home_id"]
 	var schedule: Dictionary = schedule_of(sim, person)
+	var plan: Dictionary = plan_today(sim, person)
 	var tuning: Dictionary = sim.tuning
 	var generator: RandomNumberGenerator = sim.rng.stream("behavior")
 
@@ -81,19 +109,29 @@ static func _choose(sim: RefCounted, person: Dictionary) -> Dictionary:
 		if not ordered.is_empty():
 			return ordered
 
-	if is_sleep_time(schedule, minute):
+	if is_sleep_time(plan, minute):
 		var sleep: Dictionary = Records.new_action("sleep", "schedule", Records.AT_INSIDE, home)
-		var wake: int = int(schedule["wake"])
 		var day_start: int = now - minute
-		sleep["until"] = day_start + wake if minute < wake else day_start + MINUTES_PER_DAY + wake
+		if minute < int(plan["wake"]):
+			sleep["until"] = day_start + int(plan["wake"])
+		else:
+			# Past bedtime: sleep until tomorrow's waking time, which may differ.
+			var tomorrow: Dictionary = plan_for(sim, person, (sim.clock.weekday() + 1) % 7)
+			sleep["until"] = day_start + MINUTES_PER_DAY + int(tomorrow["wake"])
 		return sleep
 
-	var away: Dictionary = away_now(sim, schedule)
+	var away: Dictionary = away_now(sim, plan)
 	if not away.is_empty():
 		var exit_id: String = sim.area.nearest_exit(sim.area.front_of(home))
 		var leave: Dictionary = Records.new_action(away["kind"], "schedule", Records.AT_OFFMAP, exit_id)
 		leave["until"] = now - minute + int(away["back"])
 		return leave
+
+	if set_meal_due(sim, person, plan):
+		person["last_set_meal_day"] = sim.clock.day_index
+		var dinner: Dictionary = Records.new_action("eat", "schedule", Records.AT_INSIDE, home)
+		dinner["minutes"] = int(tuning["set_meal_minutes"])
+		return dinner
 
 	var needs: Dictionary = person["needs"]
 	if needs["hunger"] < int(tuning["hunger_threshold"]):

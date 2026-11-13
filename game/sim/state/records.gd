@@ -33,6 +33,7 @@ static func new_person(id: String, given_name: String, family_name: String, birt
 		"place_id": "",              # building when inside; "" otherwise
 		"x": 0,                      # inches; meaningful when outside
 		"y": 0,
+		"last_set_meal_day": -1,     # day index of the last fixed household meal attended
 		"action": {},                # current action, or {} when deciding
 		"orders": [],                # player commands waiting to be carried out
 	}

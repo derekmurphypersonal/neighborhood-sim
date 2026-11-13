@@ -1,10 +1,11 @@
 {
   "layer": "fiction",
-  "note": "Daily timetables are game design, not historical claims. Times are minutes after midnight. Days: 0 = Sunday ... 6 = Saturday.",
+  "note": "Daily timetables are game design, not historical claims. Times are minutes after midnight. Each timetable has three kinds of day: weekday (Monday to Friday), saturday and sunday. 'away' is time spent off the street at work or school. 'meals' are fixed household mealtimes; on Sundays every household sits down to a midday dinner.",
   "records": [
-    {"id": "sched_worker", "type": "schedule", "wake": 390, "bed": 1320, "away": {"kind": "work", "days": [1, 2, 3, 4, 5], "leave": 450, "back": 1050}, "provenance": {"status": "fictional"}},
-    {"id": "sched_school", "type": "schedule", "wake": 420, "bed": 1230, "away": {"kind": "school", "days": [1, 2, 3, 4, 5], "leave": 495, "back": 915}, "provenance": {"status": "fictional"}},
-    {"id": "sched_at_home", "type": "schedule", "wake": 390, "bed": 1320, "provenance": {"status": "fictional"}},
-    {"id": "sched_small_child", "type": "schedule", "wake": 420, "bed": 1140, "housebound": true, "provenance": {"status": "fictional"}}
+    {"id": "sched_worker", "type": "schedule", "days": {"weekday": {"wake": 390, "bed": 1320, "away": {"kind": "work", "leave": 450, "back": 1050}}, "saturday": {"wake": 450, "bed": 1380}, "sunday": {"wake": 480, "bed": 1320, "meals": [780]}}, "provenance": {"status": "fictional"}},
+    {"id": "sched_shift", "type": "schedule", "days": {"weekday": {"wake": 390, "bed": 1320, "away": {"kind": "work", "leave": 450, "back": 1050}}, "saturday": {"wake": 390, "bed": 1380, "away": {"kind": "work", "leave": 450, "back": 780}}, "sunday": {"wake": 480, "bed": 1320, "meals": [780]}}, "provenance": {"status": "fictional"}},
+    {"id": "sched_school", "type": "schedule", "days": {"weekday": {"wake": 420, "bed": 1230, "away": {"kind": "school", "leave": 495, "back": 915}}, "saturday": {"wake": 450, "bed": 1290}, "sunday": {"wake": 480, "bed": 1230, "meals": [780]}}, "provenance": {"status": "fictional"}},
+    {"id": "sched_at_home", "type": "schedule", "days": {"weekday": {"wake": 390, "bed": 1320}, "saturday": {"wake": 420, "bed": 1380}, "sunday": {"wake": 480, "bed": 1320, "meals": [780]}}, "provenance": {"status": "fictional"}},
+    {"id": "sched_small_child", "type": "schedule", "housebound": true, "days": {"weekday": {"wake": 420, "bed": 1140}, "saturday": {"wake": 420, "bed": 1140}, "sunday": {"wake": 450, "bed": 1140, "meals": [780]}}, "provenance": {"status": "fictional"}}
   ]
 }
