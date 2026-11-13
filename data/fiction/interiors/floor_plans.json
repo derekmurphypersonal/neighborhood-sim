@@ -1,0 +1,7 @@
+{
+  "layer": "fiction",
+  "note": "FICTIONAL floor plans. Interiors in this game are invented: historical maps record a building's outline, not its rooms. Each plan is designed for a type and size of building and makes no claim about any real house. Room rectangles are [x, y, width, depth] in feet, measured from the building's south-west corner. One floor is shown.",
+  "records": [
+    {"id": "fp_small_house_30x40", "type": "floor_plan", "name": "Small house, one floor shown (fictional)", "for_building_types": ["single-family", "two-family"], "fits_ft": [30, 40], "rooms": [{"id": "living", "name": "Living room", "kind": "living", "rect_ft": [0, 0, 30, 15]}, {"id": "kitchen", "name": "Kitchen", "kind": "kitchen", "rect_ft": [0, 15, 14, 12]}, {"id": "bedroom_small", "name": "Small bedroom", "kind": "bedroom_spare", "rect_ft": [14, 15, 16, 12]}, {"id": "bedroom", "name": "Bedroom", "kind": "bedroom", "rect_ft": [0, 27, 30, 13]}], "provenance": {"status": "fictional"}}
+  ]
+}

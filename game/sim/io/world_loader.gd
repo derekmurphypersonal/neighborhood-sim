@@ -21,6 +21,7 @@ const SaveGame := preload("res://sim/io/save_game.gd")
 
 const SCENARIO_DIR: String = "fiction/scenarios"
 const SCHEDULES_PATH: String = "fiction/schedules.json"
+const INTERIORS_DIR: String = "fiction/interiors"
 const TUNING_DIR: String = "tuning"
 
 
@@ -68,6 +69,8 @@ static func load_world(scenario_id: String) -> Dictionary:
 	area.finish()
 	world["area"] = area
 
+	_assign_interiors(root, scenario_doc, area, world)
+
 	var schedule_doc: Variant = _read(root, SCHEDULES_PATH, world)
 	if schedule_doc != null:
 		for record: Dictionary in schedule_doc["records"]:
@@ -80,6 +83,30 @@ static func load_world(scenario_id: String) -> Dictionary:
 
 	_check_references(world)
 	return world
+
+
+## Gives buildings the fictional interiors the scenario assigns them.
+static func _assign_interiors(root: String, scenario_doc: Dictionary, area: Area, world: Dictionary) -> void:
+	var plans: Dictionary = {}
+	for path: String in DataFiles.list_files(root.path_join(INTERIORS_DIR), "json"):
+		var doc: Variant = _read(root, path.trim_prefix(root + "/"), world)
+		if doc != null:
+			for record: Dictionary in doc["records"]:
+				if record.get("type", "") == "floor_plan":
+					plans[record["id"]] = record
+	for record: Dictionary in scenario_doc["records"]:
+		if record.get("type", "") != "interior_assignment":
+			continue
+		var building_id: String = record["building_id"]
+		var plan_id: String = record["floor_plan_id"]
+		if not area.buildings.has(building_id):
+			world["errors"].append("An interior is assigned to unknown building %s." % building_id)
+		elif not plans.has(plan_id):
+			world["errors"].append("Building %s is assigned unknown floor plan %s." % [building_id, plan_id])
+		elif not (plans[plan_id]["for_building_types"] as Array).has(area.buildings[building_id]["building_type"]):
+			world["errors"].append("Floor plan %s is not made for a %s building (%s)." % [plan_id, area.buildings[building_id]["building_type"], building_id])
+		else:
+			area.set_interior(building_id, plans[plan_id])
 
 
 static func _read(root: String, relative_path: String, world: Dictionary) -> Variant:

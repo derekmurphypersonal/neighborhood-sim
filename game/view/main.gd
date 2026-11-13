@@ -62,6 +62,7 @@ func _ready() -> void:
 	world_view.setup(simulation)
 	world_view.person_clicked.connect(_on_person_clicked)
 	world_view.building_clicked.connect(_on_building_clicked)
+	world_view.room_clicked.connect(_on_room_clicked)
 	add_child(world_view)
 
 	var layer: CanvasLayer = CanvasLayer.new()
@@ -151,6 +152,11 @@ func _on_building_clicked(building_id: String) -> void:
 		_give_order(selected_id, {"kind": "go_to", "place_id": building_id})
 
 
+func _on_room_clicked(room_id: String) -> void:
+	if _is_players(selected_id):
+		_give_order(selected_id, {"kind": "use_room", "room_id": room_id})
+
+
 func _give_order(person_id: String, order: Dictionary) -> void:
 	var refusal: String = simulation.give_order(person_id, order)
 	var given_name: String = simulation.state.people[person_id]["given_name"]
@@ -164,6 +170,11 @@ func _give_order(person_id: String, order: Dictionary) -> void:
 			world_view.add_toast("You sent %s to %s." % [given_name, simulation.area.buildings[order["place_id"]]["label"]])
 		"talk_to":
 			world_view.add_toast("You asked %s to talk to %s." % [given_name, Describe.given_name(simulation, order["other_id"])])
+		"use_room":
+			var home: String = simulation.state.households[simulation.state.people[person_id]["household_id"]]["home_id"]
+			world_view.add_toast("You sent %s to the %s." % [given_name, (simulation.area.interiors[home]["rooms"][order["room_id"]]["name"] as String).to_lower()])
+		"enter":
+			world_view.add_toast("You sent %s into %s." % [given_name, simulation.area.institutions[order["place_id"]]["name"]])
 	hud.show_message("Order given to %s." % given_name)
 
 

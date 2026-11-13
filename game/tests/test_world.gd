@@ -17,6 +17,23 @@ func test_scenario_loads_cleanly() -> void:
 	check(world["fingerprints"].size() >= 4, "every data file read is fingerprinted")
 
 
+func test_player_home_has_a_fictional_interior() -> void:
+	var world: Dictionary = WorldLoader.load_world(SCENARIO)
+	var area: Area = world["area"]
+	var home: String = ""
+	for household: Dictionary in world["households"]:
+		if household.get("player_controlled", false):
+			home = household["home_id"]
+	check(area.has_interior(home), "the player's home has an interior")
+	check_eq(area.interiors.size(), 1, "and it is the only building with one")
+	for kind: String in ["kitchen", "bedroom", "living"]:
+		check(area.room_of_kind(home, kind) != "", "it has a %s" % kind)
+	check(not area.buildings[home].has("rooms"), "the building record itself holds no interior information")
+	var plan_text: String = DataFiles.read_text(DataFiles.data_root().path_join("fiction/interiors/floor_plans.json"))
+	check(plan_text.contains("\"status\": \"fictional\""), "floor plans are marked fictional")
+	check(plan_text.to_upper().contains("FICTIONAL FLOOR PLANS"), "and the file says so in words")
+
+
 func test_placeholder_area_is_marked() -> void:
 	var area: Area = WorldLoader.load_world(SCENARIO)["area"]
 	check(area.placeholder, "the fixture is flagged as a stand-in")

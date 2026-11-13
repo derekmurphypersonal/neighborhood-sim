@@ -3,6 +3,7 @@
   "note": "A fictional test scenario on the fictional Fixture Street. Every household, person, name and amount here is invented for testing; none describes a real person or a historical pattern.",
   "records": [
     {"id": "fixture_street_spring_1950", "type": "scenario", "title": "Fixture Street, spring 1950 (fictional test scenario)", "area": "dev_fixture/areas/fixture_street", "start_date": "1950-04-03", "start_minute": 360, "default_seed": 1950, "provenance": {"status": "fictional"}},
+    {"id": "fx_interior_1", "type": "interior_assignment", "building_id": "fx_bd_1", "floor_plan_id": "fp_small_house_30x40", "provenance": {"status": "fictional"}},
     {"id": "fx_hh_1", "type": "household", "name": "Oneworth household", "home_id": "fx_bd_1", "funds_cents": 12000, "weekly_income_cents": 6000, "weekly_expense_cents": 5600, "player_controlled": true, "provenance": {"status": "fictional"}},
     {"id": "fx_hh_2", "type": "household", "name": "Twoson household", "home_id": "fx_bd_4", "funds_cents": 4000, "weekly_income_cents": 5000, "weekly_expense_cents": 5000, "player_controlled": false, "provenance": {"status": "fictional"}},
     {"id": "fx_hh_3", "type": "household", "name": "Threeley household", "home_id": "fx_bd_2", "funds_cents": 30000, "weekly_income_cents": 8000, "weekly_expense_cents": 7000, "player_controlled": false, "provenance": {"status": "fictional"}},

@@ -5,6 +5,7 @@ extends Node2D
 
 signal person_clicked(person_id: String)
 signal building_clicked(building_id: String)
+signal room_clicked(room_id: String)
 
 const Simulation := preload("res://sim/simulation.gd")
 const Area := preload("res://sim/world/area.gd")
@@ -12,7 +13,9 @@ const Records := preload("res://sim/state/records.gd")
 
 const VIEW_SIZE: Vector2 = Vector2(1280, 720)
 ## Screen area left free for the map (the panel is on the right, the feed below).
-const MAP_RECT: Rect2 = Rect2(20, 70, 880, 430)
+const MAP_RECT: Rect2 = Rect2(262, 70, 638, 430)
+## Where the cutaway of the player's home is drawn.
+const INTERIOR_RECT: Rect2 = Rect2(20, 70, 232, 300)
 const STORY_HEIGHT_INCHES: float = 120.0
 const PERSON_RADIUS: float = 7.0
 const CLICK_RADIUS: float = 18.0
@@ -200,6 +203,7 @@ func _draw() -> void:
 			_draw_lit_window(area.buildings[building_id])
 
 	_draw_people()
+	_draw_interior()
 	_draw_house_notes()
 	_draw_floats()
 	_draw_toasts()
@@ -445,6 +449,77 @@ func modulate_box(box: StyleBoxFlat, alpha: float) -> void:
 	box.border_color.a = alpha
 
 
+# --- The player's home, seen from above ---------------------------------------
+
+## The home of the player's household, if it has an interior ("" otherwise).
+func _interior_home() -> String:
+	var household_id: String = simulation.state.player_household_id()
+	if household_id == "":
+		return ""
+	var home: String = simulation.state.households[household_id]["home_id"]
+	return home if area.has_interior(home) else ""
+
+
+## Screen rectangle of each room in the cutaway: {room_id: Rect2}.
+func _room_rects() -> Dictionary:
+	var result: Dictionary = {}
+	var home: String = _interior_home()
+	if home == "":
+		return result
+	var rooms: Dictionary = area.interiors[home]["rooms"]
+	var bounds: Rect2 = Rect2()
+	var first: bool = true
+	for room_id: String in rooms:
+		var r: Array = rooms[room_id]["rect"]
+		var rect: Rect2 = Rect2(r[0], r[1], r[2], r[3])
+		bounds = rect if first else bounds.merge(rect)
+		first = false
+	var inner: Rect2 = Rect2(INTERIOR_RECT.position + Vector2(10, 44), INTERIOR_RECT.size - Vector2(20, 54))
+	var fit: float = minf(inner.size.x / bounds.size.x, inner.size.y / bounds.size.y)
+	var origin: Vector2 = inner.get_center() - bounds.size * fit / 2.0
+	for room_id: String in rooms:
+		var r: Array = rooms[room_id]["rect"]
+		# North is up: the world's y grows northward, the screen's downward.
+		var x: float = origin.x + (float(r[0]) - bounds.position.x) * fit
+		var y: float = origin.y + (bounds.end.y - float(r[1]) - float(r[3])) * fit
+		result[room_id] = Rect2(x, y, float(r[2]) * fit, float(r[3]) * fit)
+	return result
+
+
+func _draw_interior() -> void:
+	var home: String = _interior_home()
+	if home == "":
+		return
+	draw_style_box(_toast_box, INTERIOR_RECT)
+	draw_string(_font, INTERIOR_RECT.position + Vector2(10, 18), "Inside your home", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
+	draw_string(_font, INTERIOR_RECT.position + Vector2(10, 34), "FICTIONAL INTERIOR (invented layout)", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1.0, 0.92, 0.55))
+	var rooms: Dictionary = area.interiors[home]["rooms"]
+	var rects: Dictionary = _room_rects()
+	var occupants: Dictionary = {}
+	for person: Dictionary in _occupants(home):
+		var spot: String = person["spot"] if rects.has(person["spot"]) else ""
+		if not occupants.has(spot):
+			occupants[spot] = []
+		occupants[spot].append(person)
+	for room_id: String in rects:
+		var rect: Rect2 = rects[room_id]
+		draw_rect(rect, Color(0.90, 0.86, 0.76))
+		draw_rect(rect, COLOR_OUTLINE, false, 2.0)
+		draw_string(_font, rect.position + Vector2(5, 14), rooms[room_id]["name"], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_NOTE)
+		var row: int = 0
+		for person: Dictionary in occupants.get(room_id, []):
+			var at: Vector2 = rect.position + Vector2(12, 28 + row * 15)
+			var players: bool = simulation.state.households[person["household_id"]]["player_controlled"]
+			if person["id"] == selected_id:
+				draw_circle(at, 7.0, Color.WHITE)
+			draw_circle(at, 5.0, COLOR_PLAYER if players else COLOR_NEIGHBOR)
+			var bubble: Dictionary = _bubbles.get(person["id"], {})
+			var doing: String = (bubble.get("text", "") as String).to_lower()
+			draw_string(_font, at + Vector2(9, 4), "%s: %s" % [person["given_name"], doing], HORIZONTAL_ALIGNMENT_LEFT, int(rect.size.x) - 24, 10, COLOR_NOTE)
+			row += 1
+	draw_string(_font, Vector2(INTERIOR_RECT.position.x + 10, INTERIOR_RECT.end.y - 6), "Click a room to send someone there", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.85, 0.85, 0.85))
+
+
 # --- Input -------------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -452,6 +527,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	var click: InputEventMouseButton = event
 	if not click.pressed or click.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var rects: Dictionary = _room_rects()
+	for room_id: String in rects:
+		if (rects[room_id] as Rect2).has_point(click.position):
+			room_clicked.emit(room_id)
+			return
+	if INTERIOR_RECT.has_point(click.position) and not rects.is_empty():
 		return
 	var best_id: String = ""
 	var best: float = CLICK_RADIUS
