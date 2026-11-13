@@ -223,9 +223,6 @@ func _watch(announce: bool) -> void:
 			var anchor: Dictionary = world_view.building_anchor(household["home_id"])
 			var text: String = "%s$%.2f" % ["+" if change > 0 else "-", absf(change / 100.0)]
 			world_view.add_float(anchor["point"], anchor["lift"], text, WorldView.COLOR_GOOD if change > 0 else WorldView.COLOR_BAD)
-			if household["player_controlled"]:
-				world_view.add_toast("Payday settled: your household is %s $%.2f this week." % ["up" if change > 0 else "down", absf(change / 100.0)])
-				_chime(_chime_notice)
 		_last_funds[household_id] = household["funds_cents"]
 
 
@@ -242,9 +239,14 @@ func _announce_event(event: Dictionary) -> void:
 				world_view.add_toast("%s and %s have met for the first time." % [
 					Describe.given_name(simulation, event["a"]), Describe.given_name(simulation, event["b"]),
 				])
-		"birthday", "household_short_of_money", "order_failed":
+		"birthday", "order_failed":
 			world_view.add_toast(Describe.event(simulation, event))
 			_chime(_chime_notice)
+		"payday", "rent_paid", "shopping", "empty_pantry", "household_short_of_money", "missed_work":
+			# Money news is announced for the player's own household only.
+			if simulation.state.households[event["household_id"]]["player_controlled"]:
+				world_view.add_toast(Describe.event(simulation, event))
+				_chime(_chime_notice)
 
 
 # --- Sound -------------------------------------------------------------------

@@ -78,17 +78,26 @@ func test_minute_by_minute_run_is_reproducible() -> void:
 
 func test_day_level_work_agrees_between_detail_levels() -> void:
 	# Two weeks from a midnight start: once minute by minute, once day by day.
+	# What depends only on the calendar must agree exactly. Money now follows
+	# what people do, so the two levels agree only roughly; that is checked in
+	# test_economy.gd (test_abstract_and_close_money_roughly_agree).
 	var close: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 9, 92, 0)
 	var abstract: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 9, 92, 0)
 	close.advance_minutes(14 * SimDate.MINUTES_PER_DAY)
 	abstract.advance_to_day_abstract(92 + 14)
 	check_eq(close.clock.to_save(), abstract.clock.to_save(), "both reach the same moment")
-	for household_id: String in close.state.sorted_household_ids():
-		check_eq(
-			close.state.households[household_id]["funds_cents"],
-			abstract.state.households[household_id]["funds_cents"],
-			"household money agrees for " + household_id
-		)
+	for type: String in ["birthday", "payday"]:
+		check_eq(_days_of(close, type), _days_of(abstract, type), "the same days have a %s at both levels" % type)
+	check(_days_of(close, "payday").size() >= 2, "paydays happened in the fortnight")
+
+
+## The day and subject of every event of one type, in order.
+func _days_of(simulation: Simulation, type: String) -> Array:
+	var found: Array = []
+	for event: Dictionary in simulation.state.event_log:
+		if event["type"] == type:
+			found.append([event["day"], event.get("person_id", event.get("household_id", ""))])
+	return found
 
 
 func test_run_does_not_modify_authored_data() -> void:

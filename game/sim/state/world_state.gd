@@ -10,6 +10,9 @@ var households: Dictionary = {}
 var relationships: Dictionary = {}
 var event_log: Array = []
 var next_event_id: int = 1
+## The last day advanced at the abstract (day-by-day) level, when nobody's
+## movements were followed. -1 if none.
+var last_abstract_day: int = -1
 
 
 func sorted_person_ids() -> Array:
@@ -67,6 +70,7 @@ func to_save() -> Dictionary:
 		"relationships": relationships,
 		"event_log": event_log,
 		"next_event_id": next_event_id,
+		"last_abstract_day": last_abstract_day,
 	}
 
 
@@ -76,3 +80,4 @@ func load_save(data: Dictionary) -> void:
 	relationships = data["relationships"]
 	event_log = data["event_log"]
 	next_event_id = int(data["next_event_id"])
+	last_abstract_day = int(data["last_abstract_day"])

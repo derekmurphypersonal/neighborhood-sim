@@ -133,6 +133,9 @@ static func _check_references(world: Dictionary) -> void:
 			world["errors"].append("Household %s lives in unknown building %s." % [household["id"], household["home_id"]])
 		if household.get("player_controlled", false):
 			players += 1
+		for field: String in ["funds_cents", "weekly_rent_cents", "other_weekly_income_cents", "pantry_meals"]:
+			if not (household.get(field) is int) or int(household[field]) < 0:
+				world["errors"].append("Household %s needs %s as a whole number, zero or more." % [household["id"], field])
 	if players != 1:
 		world["errors"].append("A scenario needs exactly one player household; found %d." % players)
 	for person: Dictionary in world["persons"]:
@@ -140,6 +143,8 @@ static func _check_references(world: Dictionary) -> void:
 			world["errors"].append("Person %s belongs to unknown household %s." % [person["id"], person["household_id"]])
 		if person.get("workplace_id", "") != "" and not area.buildings.has(person["workplace_id"]):
 			world["errors"].append("Person %s works in unknown building %s." % [person["id"], person["workplace_id"]])
+		if not (person.get("daily_wage_cents", 0) is int) or int(person.get("daily_wage_cents", 0)) < 0:
+			world["errors"].append("Person %s needs daily_wage_cents as a whole number, zero or more." % person["id"])
 		if not world["schedules"].has(person["schedule_id"]):
 			world["errors"].append("Person %s has unknown schedule %s." % [person["id"], person["schedule_id"]])
 	if area.streets.is_empty():

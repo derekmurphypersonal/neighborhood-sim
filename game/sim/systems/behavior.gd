@@ -8,6 +8,7 @@ extends RefCounted
 
 const Records := preload("res://sim/state/records.gd")
 const SimDate := preload("res://sim/clock/sim_date.gd")
+const Economy := preload("res://sim/systems/economy.gd")
 
 const MINUTES_PER_DAY: int = 1440
 ## The kind of room each action is carried out in, where the building has an
@@ -28,6 +29,11 @@ static func step(sim: RefCounted, person: Dictionary) -> void:
 	if not action["started"]:
 		_travel(sim, person, action)
 	elif sim.clock.abs_minute() >= action["ends_at"]:
+		match action["kind"]:
+			"eat":
+				Economy.finish_meal(sim, person)
+			"shop":
+				Economy.finish_shopping(sim, person)
 		person["action"] = {}
 
 
@@ -88,7 +94,7 @@ static func _give_way(sim: RefCounted, person: Dictionary) -> void:
 	if not person["orders"].is_empty() and action["source"] != "player" and person["at"] != Records.AT_OFFMAP:
 		person["action"] = {}
 		return
-	if action["source"] == "need" or action["source"] == "idle":
+	if action["source"] == "need" or action["source"] == "idle" or action["source"] == "errand":
 		var plan: Dictionary = plan_today(sim, person)
 		if is_sleep_time(plan, sim.clock.minute_of_day) or not away_now(sim, plan).is_empty() \
 				or set_meal_due(sim, person, plan):
@@ -155,6 +161,13 @@ static func _choose(sim: RefCounted, person: Dictionary) -> Dictionary:
 		return nap
 
 	var housebound: bool = schedule.get("housebound", false)
+	if not housebound:
+		var store: String = Economy.shopping_errand(sim, person)
+		if store != "":
+			var shop: Dictionary = Records.new_action("shop", "errand", Records.AT_INSIDE, store)
+			shop["minutes"] = int(tuning["shop_minutes"])
+			return shop
+
 	var outgoing: bool = (person["traits"] as Array).has("outgoing")
 	var homebody: bool = (person["traits"] as Array).has("homebody")
 

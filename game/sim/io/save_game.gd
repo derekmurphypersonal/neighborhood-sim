@@ -33,7 +33,7 @@ const DOCUMENT_PARTS: Array[String] = ["format_version", "scenario_id", "fingerp
 const SIMULATION_PARTS: Dictionary = {
 	"clock": ["day_index", "minute_of_day"],
 	"rng": ["master_seed", "streams"],
-	"state": ["people", "households", "relationships", "event_log", "next_event_id"],
+	"state": ["people", "households", "relationships", "event_log", "next_event_id", "last_abstract_day"],
 }
 
 

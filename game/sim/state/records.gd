@@ -28,6 +28,8 @@ static func new_person(id: String, given_name: String, family_name: String, birt
 		"household_id": household_id,
 		"schedule_id": "",
 		"workplace_id": "",          # building worked in, if the job is on the map; "" if away
+		"daily_wage_cents": 0,       # earned for each day actually worked
+		"worked_minutes_today": 0,   # minutes at work so far today
 		"traits": [],
 		"needs": {"hunger": NEED_MAX, "rest": NEED_MAX, "company": NEED_MAX, "fun": NEED_MAX},
 		"at": AT_INSIDE,
@@ -47,9 +49,13 @@ static func new_household(id: String, household_name: String, home_id: String) -
 		"name": household_name,
 		"home_id": home_id,          # building ID in the area data
 		"member_ids": [],
-		"funds_cents": 0,
-		"weekly_income_cents": 0,
-		"weekly_expense_cents": 0,
+		"funds_cents": 0,            # money in hand; never below zero
+		"weekly_rent_cents": 0,      # due each Monday
+		"rent_owed_cents": 0,        # unpaid rent carried forward
+		"other_weekly_income_cents": 0,  # income not from work, paid each Friday
+		"wages_due_cents": 0,        # earned by days worked, paid on Friday
+		"pantry_meals": 0,           # meals in the house
+		"last_empty_pantry_day": -1, # day index a meal was last eaten with nothing in the pantry
 		"player_controlled": false,
 	}
 

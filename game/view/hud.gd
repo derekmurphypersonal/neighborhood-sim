@@ -123,7 +123,22 @@ func _build_side_panel() -> void:
 		column.add_child(row)
 		_need_bars[need_name] = bar
 
+	column.add_child(_heading("Household money"))
+	_money_label = RichTextLabel.new()
+	_money_label.fit_content = true
+	_money_label.scroll_active = false
+	_money_label.add_theme_font_size_override("normal_font_size", 13)
+	column.add_child(_money_label)
+
 	column.add_child(_heading("Neighbors: the regard each has for the other"))
+	# The list scrolls, so a long street never pushes anything off the panel.
+	var scroll: ScrollContainer = ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(scroll)
+	var neighbors: VBoxContainer = VBoxContainer.new()
+	neighbors.add_theme_constant_override("separation", 2)
+	scroll.add_child(neighbors)
 	for person_id: String in simulation.state.sorted_person_ids():
 		if _player_ids.has(person_id):
 			continue
@@ -132,7 +147,7 @@ func _build_side_panel() -> void:
 			continue
 		var row: HBoxContainer = HBoxContainer.new()
 		var label: Label = Label.new()
-		label.custom_minimum_size = Vector2(280, 0)
+		label.custom_minimum_size = Vector2(268, 0)
 		label.clip_text = true
 		label.add_theme_font_size_override("font_size", 13)
 		row.add_child(label)
@@ -141,14 +156,8 @@ func _build_side_panel() -> void:
 		talk.focus_mode = Control.FOCUS_NONE
 		talk.pressed.connect(func() -> void: _talk_pressed(person_id))
 		row.add_child(talk)
-		column.add_child(row)
+		neighbors.add_child(row)
 		_neighbor_rows[person_id] = label
-
-	column.add_child(_heading("Household money"))
-	_money_label = RichTextLabel.new()
-	_money_label.fit_content = true
-	_money_label.scroll_active = false
-	column.add_child(_money_label)
 
 
 func _build_feed() -> void:
@@ -226,11 +235,12 @@ func refresh(selected_id: String, speed_index: int, music_on: bool, sound_on: bo
 			]
 		(_neighbor_rows[other_id] as Label).text = text
 
-	var money: Array[String] = []
-	for household_id: String in simulation.state.sorted_household_ids():
-		var household: Dictionary = simulation.state.households[household_id]
-		money.append("%s: $%.2f" % [household["name"], household["funds_cents"] / 100.0])
-	_money_label.text = "\n".join(money) + "\n(settled each Friday)"
+	var household: Dictionary = simulation.state.households[simulation.state.player_household_id()]
+	var owed: String = "" if household["rent_owed_cents"] == 0 else ", %s owed" % Describe.money(household["rent_owed_cents"])
+	_money_label.text = "In hand %s.  Pantry: %d meals.\nRent %s each Monday%s.\nWages earned, paid Friday: %s." % [
+		Describe.money(household["funds_cents"]), household["pantry_meals"],
+		Describe.money(household["weekly_rent_cents"]), owed, Describe.money(household["wages_due_cents"]),
+	]
 
 	var lines: Array[String] = []
 	var log: Array = simulation.state.event_log

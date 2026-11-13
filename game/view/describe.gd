@@ -25,12 +25,14 @@ static func activity(sim: RefCounted, person: Dictionary) -> String:
 			"play": return "Going out to play"
 			"go_to": return "Walking where you sent them"
 			"be_inside": return "Going to " + _place_name(sim, action["place_id"])
+			"shop": return "Going shopping at " + _place_name(sim, action["place_id"])
 		return "Heading home"
 	match kind:
 		"sleep": return "Asleep"
 		"eat": return "Having a meal"
 		"work": return "At work in " + _place_name(sim, action["place_id"]) if person["workplace_id"] != "" else "Away at work"
 		"be_inside": return "In " + _place_name(sim, action["place_id"])
+		"shop": return "Shopping in " + _place_name(sim, action["place_id"])
 		"school": return "Away at school"
 		"be_home": return "At home"
 		"pastime": return "Enjoying a pastime at home"
@@ -49,6 +51,16 @@ static func _place_name(sim: RefCounted, building_id: String) -> String:
 	return "the " + str(sim.area.buildings[building_id]["label"]) if sim.area.buildings.has(building_id) else "work"
 
 
+static func _household(sim: RefCounted, entry: Dictionary) -> String:
+	return sim.state.households[entry["household_id"]]["name"]
+
+
+## An amount of money in whole cents, as dollars and cents.
+static func money(cents: int) -> String:
+	@warning_ignore("integer_division")
+	return "$%d.%02d" % [cents / 100, cents % 100]
+
+
 static func event_time(event: Dictionary) -> String:
 	@warning_ignore("integer_division")
 	return "%s %02d:%02d" % [SimDate.weekday_name(event["day"]).left(3), event["minute"] / 60, event["minute"] % 60]
@@ -65,7 +77,26 @@ static func event(sim: RefCounted, entry: Dictionary) -> String:
 		"birthday":
 			return "%s turned %d." % [given_name(sim, entry["person_id"]), entry["age"]]
 		"household_short_of_money":
-			return "The %s is short of money." % sim.state.households[entry["household_id"]]["name"]
+			return "The %s is short of money for %s." % [_household(sim, entry), entry["reason"]]
+		"payday":
+			var other: String = "" if entry["other_cents"] == 0 else " and %s other income" % money(entry["other_cents"])
+			return "Payday: the %s received %s in wages%s." % [_household(sim, entry), money(entry["wages_cents"]), other]
+		"rent_paid":
+			if entry["short_cents"] > 0:
+				return "Rent day: the %s paid %s and still owes %s." % [_household(sim, entry), money(entry["paid_cents"]), money(entry["short_cents"])]
+			return "Rent day: the %s paid %s." % [_household(sim, entry), money(entry["paid_cents"])]
+		"shopping":
+			if entry["meals"] < entry["wanted_meals"]:
+				return "%s could afford only %d of %d meals at the store (%s)." % [
+					given_name(sim, entry["person_id"]), entry["meals"], entry["wanted_meals"], money(entry["cost_cents"]),
+				]
+			return "%s bought %d meals for the %s (%s)." % [
+				given_name(sim, entry["person_id"]), entry["meals"], _household(sim, entry), money(entry["cost_cents"]),
+			]
+		"empty_pantry":
+			return "The %s has nothing in the pantry: meals are thin." % _household(sim, entry)
+		"missed_work":
+			return "%s missed a day's work and lost %s in wages." % [given_name(sim, entry["person_id"]), money(entry["lost_cents"])]
 		"order_failed":
 			if entry.get("reason", "") == "closed":
 				return "%s found %s closed." % [given_name(sim, entry["person_id"]), _place_name(sim, entry["place_id"])]

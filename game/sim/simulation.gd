@@ -53,6 +53,7 @@ static func new_game(loaded_world: Dictionary, seed_value: int, start_day_index:
 	var day: int = start_day_index if start_day_index >= 0 else int(SimDate.parse_iso(scenario["start_date"]))
 	var minute: int = start_minute if start_minute >= 0 else int(scenario.get("start_minute", 0))
 	sim.clock = SimClock.new(day, minute)
+	sim.state.last_abstract_day = day - 1  # nothing before the start was followed
 	sim._populate()
 	return sim
 
@@ -61,8 +62,9 @@ func _populate() -> void:
 	for source: Dictionary in world["households"]:
 		var household: Dictionary = Records.new_household(source["id"], source["name"], source["home_id"])
 		household["funds_cents"] = int(source["funds_cents"])
-		household["weekly_income_cents"] = int(source["weekly_income_cents"])
-		household["weekly_expense_cents"] = int(source["weekly_expense_cents"])
+		household["weekly_rent_cents"] = int(source["weekly_rent_cents"])
+		household["other_weekly_income_cents"] = int(source["other_weekly_income_cents"])
+		household["pantry_meals"] = int(source["pantry_meals"])
 		household["player_controlled"] = source.get("player_controlled", false)
 		state.households[household["id"]] = household
 	for source: Dictionary in world["persons"]:
@@ -72,6 +74,7 @@ func _populate() -> void:
 		)
 		person["schedule_id"] = source["schedule_id"]
 		person["workplace_id"] = source.get("workplace_id", "")
+		person["daily_wage_cents"] = int(source.get("daily_wage_cents", 0))
 		person["traits"] = (source.get("traits", []) as Array).duplicate()
 		var home: String = state.households[person["household_id"]]["home_id"]
 		var door: Array = area.door_of(home)
@@ -106,6 +109,7 @@ func tick() -> void:
 		var person: Dictionary = state.people[person_id]
 		Needs.step(self, person)
 		Behavior.step(self, person)
+		Economy.track(person)
 	clock.advance_minutes(1)
 
 
@@ -119,6 +123,7 @@ func advance_minutes(minutes: int) -> void:
 func advance_day_abstract() -> void:
 	assert(clock.minute_of_day == 0, "Abstract days start at midnight.")
 	_on_day_start()
+	Economy.abstract_day(self)
 	clock.advance_to_next_day()
 
 

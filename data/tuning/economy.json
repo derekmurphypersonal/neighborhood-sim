@@ -1,6 +1,14 @@
 {
   "layer": "tuning",
+  "note": "Household money. Every value is a design choice for play on the fictional test street. None is a historical price, wage or rent. Wages, rents and starting money are set per household in the scenario.",
   "records": [
-    {"id": "weekly_expense_variation_cents", "value": 800, "label": "gameplay_tuned", "note": "How much a household's weekly spending can vary, in cents. A design value. Not a historical statistic."}
+    {"id": "meal_price_cents", "value": 22, "label": "gameplay_tuned", "note": "Price of one person's meal bought at the store, in cents. Invented for play; not a historical price."},
+    {"id": "meals_per_person_per_day", "value": 3, "label": "gameplay_tuned", "note": "Meals a person is reckoned to eat in a day, for stocking the pantry and for day-by-day accounting."},
+    {"id": "pantry_low_days", "value": 2, "label": "gameplay_tuned", "note": "A household goes shopping when the pantry holds less than this many days of meals."},
+    {"id": "pantry_stock_days", "value": 4, "label": "gameplay_tuned", "note": "A shopping trip stocks the pantry up to this many days of meals, money allowing."},
+    {"id": "shop_minutes", "value": 15, "label": "gameplay_tuned", "note": "Length of a shopping trip once inside the store."},
+    {"id": "work_attendance_minutes", "value": 240, "label": "gameplay_tuned", "note": "Minutes of work in a day that count as a day worked, for wages."},
+    {"id": "hunger_after_thin_meal", "value": 55000, "label": "gameplay_tuned", "note": "With nothing in the pantry a meal is a thin one: hunger is left no better than this."},
+    {"id": "shop_min_age", "value": 16, "label": "gameplay_tuned", "note": "Youngest age at which a person is sent to do the household's shopping."}
   ]
 }
