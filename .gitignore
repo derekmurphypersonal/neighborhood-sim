@@ -4,6 +4,8 @@ export_presets.cfg
 # OS
 .DS_Store
 Thumbs.db
+# Folders created by tools, not part of the project
+/Claude outputs/
 # Saves and scratch
 /saves/
 *.tmp

@@ -51,7 +51,7 @@ It deliberately does **not** include: needs, schedules, movement, conversations,
 ### Left over from M0
 
 - **Mac verification.** Not yet reported. The commands and expected results are in the [README](../README.md); the expected hashes changed in M1-A.
-- **Version control.** The folder is a local git repository with the work committed. The repository on the personal GitHub account (D-011) has not been created: the assistant's GitHub connection is not permitted to create repositories, so Derek creates it and pushes from the Mac with `gh repo create lindensims --private --source=. --remote=origin --push`. Never create it under the `iuvonauts` organization.
+- **Version control.** The folder is a git repository whose remote is Derek's personal repository, https://github.com/derekmurphypersonal/neighborhood-sim (D-011). Pushing is done from the Mac, because the assistant's environment has no GitHub credentials for it. Never add a remote under the `iuvonauts` organization.
 - **Historical data.** None entered. Maynard Street is chosen (D-037); its readings await confirmation.
 
 ## M1: A Week on the Block (first playable) *(confirmed, D-021)*
@@ -87,7 +87,7 @@ Not in M1-A, by design: interiors, an enterable building, wages tied to days wor
 1. Derek runs the checks in the [README](../README.md) on the Mac and plays M1-A.
 2. Derek reviews M1-A: is the loop worth extending, and what should change? The judgment is recorded in `DECISIONS.md`.
 3. Derek confirms or rejects P-014 and answers Q-018.
-4. The repository is pushed to the personal GitHub account (D-011).
+4. The work is pushed to https://github.com/derekmurphypersonal/neighborhood-sim (D-011).
 
 ### M1-B: the complete first week — not started
 
