@@ -60,7 +60,7 @@ Engine: Godot 4.7.2 stable (D-015, D-036). Do not begin a milestone until Derek 
 - **Style:** the official GDScript style guide. `snake_case` for files, functions and variables; `PascalCase` for classes; `UPPER_SNAKE_CASE` for constants.
 - **Separation:** code under `game/sim/` must not reference scene nodes, rendering, input or wall-clock time. Presentation changes simulation state only through commands.
 - **Randomness:** only through the simulation's seeded generators. No global random calls in simulation code.
-- **No fractional numbers in simulation state** (P-014). Money is whole cents, positions whole inches, needs and time whole units. Fractions may be used inside a calculation but never stored. Record shapes are defined only in `game/sim/state/records.gd`.
+- **No fractional numbers in simulation state** (D-042). Money is whole cents, positions whole inches, needs and time whole units. Fractions may be used inside a calculation but never stored. Record shapes are defined only in `game/sim/state/records.gd`.
 - **The core names no place.** Nothing under `game/sim/` may mention the fixture or any real street; which world runs is decided by the scenario (D-039). A test enforces this.
 - **Saves must stay exact** (D-040). Any new state must be covered by the save-and-continue tests before it is used.
 - **Time:** only through the simulation core's single continuous clock (D-013, D-029). No system keeps its own time or depends on frame rate. Systems advance at the detail levels defined in `docs/TIME_AND_LIFECYCLE.md` (close, routine, abstract); do not simulate every movement and conversation for residents far from the player (D-026 to D-028).

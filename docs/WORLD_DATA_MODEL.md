@@ -1,6 +1,6 @@
 # World Data Model
 
-Status: updated 2026-11-13 for M1-A. Confirmed: layer separation (D-020), provenance (D-019), geometry independent of presentation (D-016), historical identity apart from simulation state (D-023), provenance-preserving divergence (D-024), fictional interiors (D-032), date-of-birth aging (D-030), player-driven divergence (D-033), area and scenario data (D-039), exact saves (D-040). Proposed: plain-dictionary records with no fractional numbers (P-014). Sections 13 and 14 describe what is built; the rest is the agreed design, of which only part exists in code. See [DECISIONS.md](../DECISIONS.md).
+Status: updated 2026-11-13 for M1-A. Confirmed: layer separation (D-020), provenance (D-019), geometry independent of presentation (D-016), historical identity apart from simulation state (D-023), provenance-preserving divergence (D-024), fictional interiors (D-032), date-of-birth aging (D-030), player-driven divergence (D-033), area and scenario data (D-039), exact saves (D-040). Also confirmed: plain-dictionary records with no fractional numbers (D-042). Sections 13 and 14 describe what is built; the rest is the agreed design, of which only part exists in code. See [DECISIONS.md](../DECISIONS.md).
 
 ## 1. Layers *(confirmed, D-020, D-023)*
 
@@ -194,7 +194,7 @@ No file in this repository contains the name of a real private individual taken 
 
 **Replacing the fixture with Maynard Street** means adding the area files and a scenario that names that area and places households in its buildings. No simulation code changes; a test guards this.
 
-## 14. Simulation records and saves as built *(D-040; P-014 proposed)*
+## 14. Simulation records and saves as built *(confirmed, D-040, D-042)*
 
 Record shapes are defined in one file, `game/sim/state/records.gd`. Differences from the design in §6, to be reconciled when the design is next revised:
 

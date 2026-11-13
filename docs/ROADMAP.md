@@ -1,6 +1,6 @@
 # Roadmap and First Playable Milestone
 
-Status: updated 2026-11-13. **M0 is reviewed and accepted. M1-A is built and its loop accepted by Derek (D-041); the additions he asked for are in and awaiting his check. M1-B has not been started or authorized.** See [DECISIONS.md](../DECISIONS.md).
+Status: updated 2026-11-13. **M0 is reviewed and accepted. M1-A is built and its loop accepted by Derek (D-041); the additions he asked for are in and accepted (D-044). M1-B has not been started or authorized.** See [DECISIONS.md](../DECISIONS.md).
 
 Milestones are defined by what a player can do at the end of each, not by which systems exist.
 
@@ -86,14 +86,12 @@ Not in M1-A, by design: interiors, an enterable building, wages tied to days wor
 | Three days pass untouched and residents keep routines and talk to each other | Met in automated tests: everyone home asleep at 03:00; workers and pupils away on weekday mornings and home on Sunday; nobody runs out of food or rest; 39 conversations in three days with seed 1950 |
 | Directing your household gives a visibly different outcome | Met in automated tests: an ordered conversation happens and the run's state differs from an undirected one |
 | Saving at an arbitrary moment and continuing equals running straight through | Met in automated tests at thirteen save points, with and without orders |
-| Derek can start it and play it | Met for the first build: Derek played it on the Mac and judged the loop good. The bubbles, signals and audio added afterwards were checked by screenshot on Linux only; the audio has not been heard by anyone. |
+| Derek can start it and play it | Met for the first build: Derek played it on the Mac and judged the loop good. Derek then tried the bubbles, signals and music and accepted them (D-044). |
 
 ### Before M1-B can begin
 
-1. Derek tries the additions (bubbles, signals, music) and says whether they are what he wanted.
-2. Derek confirms or rejects P-014 and answers Q-018.
-3. Derek authorizes M1-B.
-4. New commits are pushed to https://github.com/derekmurphypersonal/neighborhood-sim (D-011); see Q-020 for who pushes.
+1. Derek gives next steps and authorizes M1-B. Everything else asked of him for M1-A is settled: the additions are accepted (D-044), records stay as dictionaries (D-042), and conversations play out (D-043).
+2. New commits are pushed to https://github.com/derekmurphypersonal/neighborhood-sim (D-011); see Q-020 for who pushes.
 
 ### M1-B: the complete first week — not started
 

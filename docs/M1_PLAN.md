@@ -1,6 +1,6 @@
 # M1 Implementation Plan (proposal)
 
-Status: 2026-11-13. **Approved by Derek, including the document changes in §8, which have been applied. M1-A (steps 1 to 10) has been built and is awaiting review; M1-B has not been started.** Current status is tracked in [ROADMAP.md](ROADMAP.md). One departure from this plan: step 3 kept records as plain dictionaries under a no-fractions rule instead of typed classes (proposal P-014 in `DECISIONS.md`).
+Status: 2026-11-13. **Approved by Derek, including the document changes in §8, which have been applied. M1-A (steps 1 to 10) has been built and is awaiting review; M1-B has not been started.** Current status is tracked in [ROADMAP.md](ROADMAP.md). One departure from this plan: step 3 kept records as plain dictionaries under a no-fractions rule instead of typed classes (confirmed as D-042 in `DECISIONS.md`).
 
 The M1 milestone and its outcome are unchanged (D-021, [ROADMAP.md](ROADMAP.md)): one week on one block, with one player household among autonomous neighbors, that is enjoyable to watch and direct. This plan only splits the work in two.
 

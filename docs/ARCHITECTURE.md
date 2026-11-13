@@ -1,6 +1,6 @@
 # Architecture
 
-Status: updated 2026-11-13 for M1-A. Confirmed: engine (D-015, pinned at 4.7.2 by D-036), presentation (D-016), separate seeded core (D-017, D-025), JSON data layers (D-020), requirements D-023 to D-029, testing approach (D-031), area and scenario data (D-039), exact saves (D-040). Proposed: plain-dictionary records under a no-fractions rule (P-014). Sections below say what is built and what is design only. See [DECISIONS.md](../DECISIONS.md).
+Status: updated 2026-11-13 for M1-A. Confirmed: engine (D-015, pinned at 4.7.2 by D-036), presentation (D-016), separate seeded core (D-017, D-025), JSON data layers (D-020), requirements D-023 to D-029, testing approach (D-031), area and scenario data (D-039), exact saves (D-040). Also confirmed: plain-dictionary records under a no-fractions rule (D-042). Sections below say what is built and what is design only. See [DECISIONS.md](../DECISIONS.md).
 
 This document must be kept current: when the structure of the code changes, this file changes in the same commit, and any change of decision is recorded in `DECISIONS.md`.
 
@@ -74,7 +74,7 @@ The model is described in [TIME_AND_LIFECYCLE.md §2–§4](TIME_AND_LIFECYCLE.m
 - **Player orders** enter through `Simulation.give_order()`, are validated, queued on the resident, and recorded with their minute in `input_log` (inputs, not state).
 - **Walking** follows waypoints from the area: door, front of the house on the street edge, target. Doors and fronts are derived from footprints and the street line when the area is loaded.
 - **`Simulation.trails`** holds where each person walked during the latest tick. It exists only so the view can draw walking smoothly; it is not state, is never saved, and no system reads it.
-- **No fractional numbers in state** (P-014). Positions are whole inches, money whole cents, needs whole units, time whole minutes.
+- **No fractional numbers in state** (D-042). Positions are whole inches, money whole cents, needs whole units, time whole minutes.
 
 ## 5. Repository layout
 
