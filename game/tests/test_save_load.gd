@@ -33,8 +33,7 @@ func _advance(simulation: Simulation, start: int, to_offset: int, with_orders: b
 
 
 func _reload(simulation: Simulation) -> Simulation:
-	var parsed: Dictionary = SaveGame.parse(SaveGame.to_text(simulation))
-	return Simulation.from_save(WorldLoader.load_world(SCENARIO), parsed["document"]["simulation"])
+	return SaveGame.restore(SaveGame.to_text(simulation), WorldLoader.load_world(SCENARIO))["simulation"]
 
 
 func test_state_has_no_fractional_numbers() -> void:
@@ -102,16 +101,78 @@ func test_save_records_what_it_was_made_from() -> void:
 func test_unreadable_saves_are_refused() -> void:
 	check(not SaveGame.parse("not a save")["ok"], "nonsense is refused")
 	check(not SaveGame.parse("{\"format_version\": 999}")["ok"], "another format version is refused")
+	check(not SaveGame.parse("{\"format_version\": 1}")["ok"], "a save with parts missing is refused")
+	check(not SaveGame.parse("[1, 2, 3]")["ok"], "JSON that is not a save is refused")
+	for text: String in ["not a save", "{\"format_version\": 1}"]:
+		var parsed: Dictionary = SaveGame.parse(text)
+		check(parsed["error"] != "", "a refusal says why")
+		check_eq(parsed["document"], {}, "a refused save yields no document")
 
 
+## The contract: to_text() writes a whole save; restore() is the one call
+## that turns save text back into a running simulation, or says why not.
+func test_restore_gives_back_the_simulation() -> void:
+	var simulation: Simulation = _new()
+	simulation.advance_minutes(900)
+	var world: Dictionary = WorldLoader.load_world(SCENARIO)
+	var restored: Dictionary = SaveGame.restore(SaveGame.to_text(simulation), world)
+	check(restored["ok"], "a good save is restored")
+	check_eq(restored["error"], "", "with no error")
+	check_eq(restored["changed_data"], [] as Array[String], "and no changed data")
+	check_eq((restored["simulation"] as Simulation).state_hash(), simulation.state_hash(), "to exactly the same state")
+
+
+func test_restore_refuses_without_crashing() -> void:
+	var world: Dictionary = WorldLoader.load_world(SCENARIO)
+	for text: String in ["", "not a save", "{\"format_version\": 999}", "{\"format_version\": 1}"]:
+		var restored: Dictionary = SaveGame.restore(text, world)
+		check(not restored["ok"], "bad save text is refused")
+		check(restored["simulation"] == null, "and no simulation is produced")
+		check(restored["error"] != "", "and the reason is given")
+	# A save from another scenario must not be loaded into this world.
+	var document: Dictionary = SaveGame.parse(SaveGame.to_text(_new()))["document"]
+	document["scenario_id"] = "some_other_scenario"
+	var wrong: Dictionary = SaveGame.restore(JSON.stringify(document), world)
+	check(not wrong["ok"], "a save from a different scenario is refused")
+
+
+func test_restore_reports_changed_data() -> void:
+	var simulation: Simulation = _new()
+	var world: Dictionary = WorldLoader.load_world(SCENARIO)
+	world["fingerprints"][world["fingerprints"].keys()[0]] = "different"
+	var restored: Dictionary = SaveGame.restore(SaveGame.to_text(simulation), world)
+	check(restored["ok"], "a save still loads when data files have changed")
+	check_eq(restored["changed_data"].size(), 1, "but the change is reported")
+
+
+## Writing and reading a save file. Uses a scratch folder of its own, so the
+## test does not depend on the per-user data folder being writable.
 func test_save_file_round_trip() -> void:
 	var simulation: Simulation = _new()
 	simulation.advance_minutes(500)
-	var path: String = OS.get_user_data_dir().path_join("test_save.json")
-	DirAccess.make_dir_recursive_absolute(OS.get_user_data_dir())
-	check(SaveGame.write_file(path, SaveGame.to_text(simulation)), "the save file is written")
-	var parsed: Dictionary = SaveGame.parse(FileAccess.get_file_as_string(path))
-	check(parsed["ok"], "and read back")
-	var reloaded: Simulation = Simulation.from_save(WorldLoader.load_world(SCENARIO), parsed["document"]["simulation"])
-	check_eq(reloaded.state_hash(), simulation.state_hash(), "with the same state")
+	var folder: String = OS.get_temp_dir().path_join("neighborhood_test_%d" % OS.get_process_id())
+	var path: String = folder.path_join("saves").path_join("test_save.json")
+	check_eq(SaveGame.write_file(path, SaveGame.to_text(simulation)), "", "the save file is written, creating its folder")
+	check_eq(SaveGame.write_file(path, SaveGame.to_text(simulation)), "", "and can be written over")
+	check(not FileAccess.file_exists(path + ".tmp"), "leaving no temporary file behind")
+	var read: Dictionary = SaveGame.read_file(path)
+	check(read["ok"], "and read back")
+	var restored: Dictionary = SaveGame.restore(read["text"], WorldLoader.load_world(SCENARIO))
+	check(restored["ok"], "and restored")
+	if restored["ok"]:
+		check_eq((restored["simulation"] as Simulation).state_hash(), simulation.state_hash(), "with the same state")
 	DirAccess.remove_absolute(path)
+	DirAccess.remove_absolute(folder.path_join("saves"))
+	DirAccess.remove_absolute(folder)
+	check(not DirAccess.dir_exists_absolute(folder), "and the scratch folder is cleaned up")
+
+
+func test_file_problems_are_reported_not_fatal() -> void:
+	# A regular file stands where a folder would be needed, so nothing can be created under it.
+	var blocker: String = OS.get_temp_dir().path_join("neighborhood_blocker_%d" % OS.get_process_id())
+	check_eq(SaveGame.write_file(blocker, "x"), "", "set up a plain file")
+	var impossible: String = blocker.path_join("saves").path_join("test_save.json")
+	check(SaveGame.write_file(impossible, "text") != "", "a save that cannot be written reports why")
+	var missing: Dictionary = SaveGame.read_file(impossible)
+	check(not missing["ok"] and missing["error"] != "", "a save that cannot be read reports why")
+	DirAccess.remove_absolute(blocker)

@@ -175,6 +175,9 @@ func to_save() -> Dictionary:
 
 
 ## Rebuilds a simulation from saved state and the static world it ran in.
+## Low-level: "saved" is only the "simulation" part of a save document, as
+## produced by to_save() and already checked by SaveGame.parse(). To load a
+## save, call SaveGame.restore(), which does the checking and then calls this.
 static func from_save(loaded_world: Dictionary, saved: Dictionary) -> RefCounted:
 	var sim: RefCounted = new(loaded_world)
 	sim.clock.load_save(saved["clock"])
