@@ -87,6 +87,8 @@ func _ready() -> void:
 		_take_screenshot()
 		return
 	_setup_audio()
+	if args.has("--self-check"):
+		_self_check()
 
 
 func _process(delta: float) -> void:
@@ -273,6 +275,46 @@ func _chime(player: AudioStreamPlayer) -> void:
 		return
 	_last_chime_ms = now
 	player.play()
+
+
+## Development aid: exercises the scene without a person and reports.
+##   godot --headless --path game -- --self-check
+## Runs a day and a half of game time through the same path as play (so the
+## view is told about every bubble, notice and float), gives one order,
+## checks the audio files loaded, and exits with code 0 only if all is well.
+func _self_check() -> void:
+	set_process(false)
+	var problems: Array[String] = []
+	for entry: Array in [["music", _music], ["talk chime", _chime_talk], ["notice chime", _chime_notice]]:
+		var player: AudioStreamPlayer = entry[1]
+		if player == null or player.stream == null or player.stream.get_length() <= 0.0:
+			problems.append("%s did not load" % entry[0])
+		else:
+			print("SELF-CHECK  %s loaded, %.1f seconds" % [entry[0], player.stream.get_length()])
+	if _music != null and not (_music.stream as AudioStreamOggVorbis).loop:
+		problems.append("music is not set to loop")
+	var refusal: String = simulation.give_order(selected_id, {"kind": "go_home"})
+	if refusal != "":
+		problems.append("an order to the player's household was refused: " + refusal)
+	var before: String = simulation.clock.describe()
+	for step: int in 2160:
+		simulation.advance_minutes(1)
+		world_view.after_ticks()
+		_watch(true)
+		if step % 60 == 0:
+			world_view.queue_redraw()
+			hud.refresh(selected_id, speed_index, music_on, sound_on)
+			await get_tree().process_frame
+	print("SELF-CHECK  ran from %s to %s" % [before, simulation.clock.describe()])
+	print("SELF-CHECK  %d events in the log; %d people have a bubble" % [simulation.state.event_log.size(), _last_activity.size()])
+	if simulation.state.event_log.is_empty():
+		problems.append("nothing happened in a day and a half")
+	if _last_activity.size() != simulation.state.people.size():
+		problems.append("not everyone has an activity bubble")
+	for problem: String in problems:
+		print("SELF-CHECK  PROBLEM: " + problem)
+	print("SELF-CHECK  %s" % ("passed" if problems.is_empty() else "FAILED"))
+	get_tree().quit(0 if problems.is_empty() else 1)
 
 
 ## Development aid: run some minutes, save a picture of the screen, and quit.
