@@ -1,6 +1,6 @@
 # Roadmap and First Playable Milestone
 
-Status: updated 2026-11-13. **M0 is reviewed and accepted. M1-A is built and awaiting Derek's review. M1-B has not been started.** See [DECISIONS.md](../DECISIONS.md).
+Status: updated 2026-11-13. **M0 is reviewed and accepted. M1-A is built and its loop accepted by Derek (D-041); the additions he asked for are in and awaiting his check. M1-B has not been started or authorized.** See [DECISIONS.md](../DECISIONS.md).
 
 Milestones are defined by what a player can do at the end of each, not by which systems exist.
 
@@ -10,7 +10,7 @@ Milestones are defined by what a player can do at the end of each, not by which 
 |---|---|---|---|
 | Pre-production | Documentation and review | — read a documented, reviewed design and plan | Done |
 | **M0** | Groundwork | — nothing yet; a decade runs headless on a fixture, and candidate blocks in the real Linden are identified | Done; no historical data entered yet |
-| **M1** | **A Week on the Block** | live one week of spring 1950 with one household on one block, with pause and speed controls | M1-A built, awaiting review; M1-B not started |
+| **M1** | **A Week on the Block** | live one week of spring 1950 with one household on one block, with pause and speed controls | M1-A accepted; M1-B not started |
 | M2 | A Year on the Block | play through 1950 continuously, fast-forwarding at will, with birthdays, life events and summaries of skipped time | |
 | M3 | The Decade on the Block | play 1950–1959 on that block, with documented changes arriving on their dates | |
 | M4+ | Widening Linden | play on a growing map, block by researched block | |
@@ -62,7 +62,7 @@ M1 is delivered in two parts with a review between them (D-038). The full plan, 
 
 **Where:** the Oliver Street end of Maynard Street, about eight to ten houses (D-037). Until the map readings for it are confirmed and entered, M1 runs on the fictional Fixture Street (D-035), which is always identified as fictional on screen and in data. Because areas and scenarios are separate data behind one loader (D-039), the swap needs no simulation code changes.
 
-### M1-A: a small playable loop — built, awaiting Derek's review
+### M1-A: a small playable loop — built and accepted by Derek (D-041)
 
 What you can do now, on Fixture Street:
 
@@ -70,6 +70,12 @@ What you can do now, on Fixture Street:
 - See residents keep their timetables (sleep, work or school away from the street, home), look after three needs (fed, rested, company), walk between places, and fall into conversation with neighbors on their own.
 - Direct the members of your household: send one to a house, send one home, or have one go and talk to a neighbor.
 - See change: each conversation shifts how two people regard each other; household money is settled each Friday; a feed lists what has happened.
+
+Added after Derek's review of the first build:
+
+- **Bubbles:** everyone outdoors has a bubble saying what they are doing; a new activity makes the bubble pop and stay highlighted for a few seconds. Notes appear over a house when someone inside starts something.
+- **Clearer signals:** a pulsing ring and bright line mark people talking; regard changes float up as +3 or -2 when a conversation ends; notices cross the bottom of the map for things involving your household (a conversation starting, a first meeting, payday, an order given); people leaving for and returning from work or school are announced at the end of the street; new feed lines are marked NEW; the view darkens at night and houses with someone awake show a lit window.
+- **Sound:** an original placeholder waltz as background music, and two soft chimes, each with an on/off button (M toggles music).
 
 Built underneath: one way of advancing time in minutes; exact save and load with reproducibility tests; area and scenario data with one loader.
 
@@ -80,14 +86,14 @@ Not in M1-A, by design: interiors, an enterable building, wages tied to days wor
 | Three days pass untouched and residents keep routines and talk to each other | Met in automated tests: everyone home asleep at 03:00; workers and pupils away on weekday mornings and home on Sunday; nobody runs out of food or rest; 39 conversations in three days with seed 1950 |
 | Directing your household gives a visibly different outcome | Met in automated tests: an ordered conversation happens and the run's state differs from an undirected one |
 | Saving at an arbitrary moment and continuing equals running straight through | Met in automated tests at thirteen save points, with and without orders |
-| Derek can start it and play it | **Not yet verified.** The scene was run on Linux and checked by screenshot only. Mouse and keyboard control has not been exercised by a person. |
+| Derek can start it and play it | Met for the first build: Derek played it on the Mac and judged the loop good. The bubbles, signals and audio added afterwards were checked by screenshot on Linux only; the audio has not been heard by anyone. |
 
 ### Before M1-B can begin
 
-1. Derek runs the checks in the [README](../README.md) on the Mac and plays M1-A.
-2. Derek reviews M1-A: is the loop worth extending, and what should change? The judgment is recorded in `DECISIONS.md`.
-3. Derek confirms or rejects P-014 and answers Q-018.
-4. The work is pushed to https://github.com/derekmurphypersonal/neighborhood-sim (D-011).
+1. Derek tries the additions (bubbles, signals, music) and says whether they are what he wanted.
+2. Derek confirms or rejects P-014 and answers Q-018.
+3. Derek authorizes M1-B.
+4. New commits are pushed to https://github.com/derekmurphypersonal/neighborhood-sim (D-011); see Q-020 for who pushes.
 
 ### M1-B: the complete first week — not started
 

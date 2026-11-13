@@ -6,7 +6,7 @@ Instructions for Claude (and any other AI assistant) working in this repository.
 
 An original historical neighborhood life-simulation game set in Linden, Malden, Massachusetts, played through 1950–1959. Real place, fictional people. Gameplay and emergent stories come first; history supplies the stage and must not be falsified.
 
-Current phase: **M1-A (a small playable loop on the fictional Fixture Street) is built and awaiting Derek's review. M1-B is not started.** See `docs/ROADMAP.md` and `docs/M1_PLAN.md`.
+Current phase: **M1-A (a small playable loop on the fictional Fixture Street) is built and accepted (D-041). M1-B is not started and not yet authorized.** See `docs/ROADMAP.md` and `docs/M1_PLAN.md`.
 
 ## Read before working
 
@@ -90,7 +90,7 @@ Engine: Godot 4.7.2 stable (D-015, D-036). Do not begin a milestone until Derek 
 
 ## Repository hosting
 
-This is a personal project. The repository lives under Derek's personal GitHub account, `derekmurphypersonal` (D-011). **Never create it in, push it to, or add a remote for the `iuvonauts` organization,** and do not apply the iuvo repository template or `agents/iuvo.md` here. After any remote is added, check `git remote -v` shows only the personal account.
+This is a personal project. The repository is https://github.com/derekmurphypersonal/neighborhood-sim (D-011). Never ask for or accept a GitHub password or token in conversation; access is granted through GitHub's own app permissions (Q-020). **Never create it in, push it to, or add a remote for the `iuvonauts` organization,** and do not apply the iuvo repository template or `agents/iuvo.md` here. After any remote is added, check `git remote -v` shows only the personal account.
 
 ## Research access
 

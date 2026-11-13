@@ -5,13 +5,18 @@ extends Control
 signal speed_chosen(index: int)
 signal person_chosen(person_id: String)
 signal order_given(person_id: String, order: Dictionary)
+signal music_toggled(on: bool)
+signal sound_toggled(on: bool)
 
 const Simulation := preload("res://sim/simulation.gd")
 const SimDate := preload("res://sim/clock/sim_date.gd")
 const Records := preload("res://sim/state/records.gd")
+const Describe := preload("res://view/describe.gd")
 
 const SPEED_LABELS: Array[String] = ["Pause", "1 min/s", "10 min/s", "1 hour/s"]
-const FEED_LINES: int = 9
+const FEED_LINES: int = 7
+## How long a new line in the feed stays highlighted, in real milliseconds.
+const FEED_FRESH_MS: int = 5000
 const NEED_LABELS: Dictionary = {"hunger": "Fed", "rest": "Rested", "company": "Company"}
 
 var simulation: Simulation
@@ -24,6 +29,10 @@ var _neighbor_rows: Dictionary = {}
 var _money_label: RichTextLabel
 var _feed: RichTextLabel
 var _player_ids: Array = []
+var _music_button: Button
+var _sound_button: Button
+## event id -> the moment it first appeared in the feed
+var _first_shown: Dictionary = {}
 
 
 func setup(sim: Simulation) -> void:
@@ -58,9 +67,13 @@ func _build_top_bar() -> void:
 		button.pressed.connect(func() -> void: speed_chosen.emit(index))
 		bar.add_child(button)
 		_speed_buttons.append(button)
+	_music_button = _toggle("Music", func(on: bool) -> void: music_toggled.emit(on))
+	bar.add_child(_music_button)
+	_sound_button = _toggle("Chimes", func(on: bool) -> void: sound_toggled.emit(on))
+	bar.add_child(_sound_button)
 	if simulation.area.placeholder:
 		var banner: Label = Label.new()
-		banner.text = "  FICTIONAL TEST STREET: not a real place"
+		banner.text = "FICTIONAL TEST STREET: not a real place"
 		banner.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
 		bar.add_child(banner)
 	_message_label = Label.new()
@@ -144,9 +157,20 @@ func _build_feed() -> void:
 	panel.custom_minimum_size = Vector2(880, 193)
 	add_child(panel)
 	_feed = RichTextLabel.new()
+	_feed.bbcode_enabled = true
 	_feed.scroll_active = false
 	_feed.add_theme_font_size_override("normal_font_size", 13)
 	panel.add_child(_feed)
+
+
+func _toggle(text: String, on_change: Callable) -> Button:
+	var button: Button = Button.new()
+	button.text = text
+	button.toggle_mode = true
+	button.button_pressed = true
+	button.focus_mode = Control.FOCUS_NONE
+	button.toggled.connect(on_change)
+	return button
 
 
 func _heading(text: String) -> Label:
@@ -168,17 +192,21 @@ func _talk_pressed(other_id: String) -> void:
 
 # --- Refreshing --------------------------------------------------------------
 
-func refresh(selected_id: String, speed_index: int) -> void:
+func refresh(selected_id: String, speed_index: int, music_on: bool, sound_on: bool) -> void:
 	_selected_for_talk = selected_id
 	_clock_label.text = simulation.clock.describe()
 	for index: int in _speed_buttons.size():
 		_speed_buttons[index].set_pressed_no_signal(index == speed_index)
+	_music_button.set_pressed_no_signal(music_on)
+	_music_button.text = "Music: on" if music_on else "Music: off"
+	_sound_button.set_pressed_no_signal(sound_on)
+	_sound_button.text = "Chimes: on" if sound_on else "Chimes: off"
 
 	var person: Dictionary = simulation.state.people[selected_id]
 	var age: int = SimDate.age_on(person["birth_day"], simulation.clock.day_index)
 	var traits: String = ", ".join(person["traits"]) if not person["traits"].is_empty() else "no marked traits"
 	_selected_label.text = "[b]%s %s[/b], %d  (%s)\n%s" % [
-		person["given_name"], person["family_name"], age, traits, describe_activity(person),
+		person["given_name"], person["family_name"], age, traits, Describe.activity(simulation, person),
 	]
 	for need_name: String in Records.NEED_NAMES:
 		(_need_bars[need_name] as ProgressBar).value = person["needs"][need_name]
@@ -206,57 +234,13 @@ func refresh(selected_id: String, speed_index: int) -> void:
 
 	var lines: Array[String] = []
 	var log: Array = simulation.state.event_log
+	var now: int = Time.get_ticks_msec()
 	for index: int in range(maxi(0, log.size() - FEED_LINES), log.size()):
-		lines.append(describe_event(log[index]))
-	_feed.text = "What has happened\n" + "\n".join(lines)
-
-
-func _name(person_id: String) -> String:
-	return simulation.state.people[person_id]["given_name"]
-
-
-func describe_activity(person: Dictionary) -> String:
-	var action: Dictionary = person["action"]
-	if action.is_empty():
-		return "Deciding what to do"
-	var kind: String = action["kind"]
-	if not action["started"]:
-		match kind:
-			"work": return "Leaving for work"
-			"school": return "Leaving for school"
-			"call_on": return "Going to talk to " + _name(action["other_id"])
-			"visit": return "Walking over to call on a neighbor"
-			"sit_out": return "Stepping outside"
-			"go_to": return "Walking where you sent them"
-		return "Heading home"
-	match kind:
-		"sleep": return "Asleep"
-		"eat": return "Having a meal"
-		"work": return "Away at work"
-		"school": return "Away at school"
-		"be_home": return "At home"
-		"sit_out": return "Sitting out front"
-		"visit": return "Calling at a neighbor's door"
-		"go_to": return "Waiting where you sent them"
-		"call_on": return "Looking for " + _name(action["other_id"])
-		"talk": return "Talking with " + _name(action["other_id"])
-	return kind
-
-
-func describe_event(event: Dictionary) -> String:
-	@warning_ignore("integer_division")
-	var when: String = "%s %02d:%02d" % [SimDate.weekday_name(event["day"]).left(3), event["minute"] / 60, event["minute"] % 60]
-	match event["type"]:
-		"conversation":
-			var first: String = " (their first meeting)" if event["first_meeting"] else ""
-			return "%s  %s and %s talked for %d minutes%s. Regard: %s %+d, %s %+d." % [
-				when, _name(event["a"]), _name(event["b"]), event["minutes"], first,
-				_name(event["a"]), event["a_change"], _name(event["b"]), event["b_change"],
-			]
-		"birthday":
-			return "%s  %s turned %d." % [when, _name(event["person_id"]), event["age"]]
-		"household_short_of_money":
-			return "%s  The %s is short of money." % [when, simulation.state.households[event["household_id"]]["name"]]
-		"order_failed":
-			return "%s  %s could not find %s: away from the street." % [when, _name(event["person_id"]), _name(event["other_id"])]
-	return "%s  %s" % [when, event["type"]]
+		var event: Dictionary = log[index]
+		if not _first_shown.has(event["id"]):
+			_first_shown[event["id"]] = now
+		var line: String = "%s  %s" % [Describe.event_time(event), Describe.event(simulation, event)]
+		if now - int(_first_shown[event["id"]]) < FEED_FRESH_MS:
+			line = "[color=#ffe98c][b]NEW[/b]  %s[/color]" % line
+		lines.append(line)
+	_feed.text = "[b]What has happened[/b]\n" + "\n".join(lines)

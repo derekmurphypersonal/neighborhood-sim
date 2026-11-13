@@ -1,5 +1,6 @@
 extends Node2D
-## Draws the area and the people in it in a plain isometric projection.
+## Draws the area and the people in it in a plain isometric projection, with
+## activity bubbles, floating notices and a day-and-night tint.
 ## Presentation only: reads simulation state, changes nothing.
 
 signal person_clicked(person_id: String)
@@ -14,7 +15,16 @@ const VIEW_SIZE: Vector2 = Vector2(1280, 720)
 const MAP_RECT: Rect2 = Rect2(20, 70, 880, 430)
 const STORY_HEIGHT_INCHES: float = 120.0
 const PERSON_RADIUS: float = 7.0
-const CLICK_RADIUS: float = 16.0
+const CLICK_RADIUS: float = 18.0
+const FAN_SPACING: float = 30.0
+
+## How long things stay on screen, in real milliseconds.
+const BUBBLE_FRESH_MS: int = 3500
+const BUBBLE_POP_MS: int = 180
+const FLOAT_MS: int = 2600
+const HOUSE_NOTE_MS: int = 3200
+const TOAST_MS: int = 4500
+const MAX_FLOATS: int = 14
 
 const COLOR_GROUND: Color = Color(0.56, 0.66, 0.47)
 const COLOR_LOT: Color = Color(0.63, 0.72, 0.52)
@@ -26,7 +36,11 @@ const COLOR_HOME_ROOF: Color = Color(0.30, 0.42, 0.62)
 const COLOR_OUTLINE: Color = Color(0.20, 0.20, 0.20)
 const COLOR_PLAYER: Color = Color(0.20, 0.38, 0.75)
 const COLOR_NEIGHBOR: Color = Color(0.78, 0.42, 0.18)
-const COLOR_TALK: Color = Color(1.0, 1.0, 1.0)
+const COLOR_TALK: Color = Color(1.0, 0.95, 0.45)
+const COLOR_NIGHT: Color = Color(0.05, 0.08, 0.25)
+const COLOR_GOOD: Color = Color(0.20, 0.55, 0.20)
+const COLOR_BAD: Color = Color(0.75, 0.20, 0.15)
+const COLOR_NOTE: Color = Color(0.15, 0.15, 0.15)
 
 var simulation: Simulation
 var area: Area
@@ -36,21 +50,87 @@ var minute_fraction: float = 1.0
 var _scale: float = 0.1
 var _offset: Vector2 = Vector2.ZERO
 var _font: Font
-## Where each person was drawn from during the latest minute: id -> [points].
 var _trails: Dictionary = {}
 var _screen_positions: Dictionary = {}
+## person_id -> {"text": String, "since": int}
+var _bubbles: Dictionary = {}
+## Each: {"text", "point" (world [x, y]) , "lift" (pixels), "since", "color"}
+var _floats: Array = []
+## building_id -> {"text", "since"}
+var _house_notes: Dictionary = {}
+## Each: {"text", "since"}
+var _toasts: Array = []
+var _bubble_box: StyleBoxFlat
+var _bubble_box_fresh: StyleBoxFlat
+var _toast_box: StyleBoxFlat
 
 
 func setup(sim: Simulation) -> void:
 	simulation = sim
 	area = sim.area
 	_font = ThemeDB.fallback_font
+	_bubble_box = _box(Color(1, 1, 1, 0.82), COLOR_OUTLINE, 1)
+	_bubble_box_fresh = _box(Color(1.0, 0.98, 0.80), Color(0.85, 0.55, 0.10), 2)
+	_toast_box = _box(Color(0.12, 0.14, 0.20, 0.92), Color(1.0, 0.92, 0.55), 2)
 	_fit_to_screen()
+
+
+func _box(fill: Color, border: Color, width: int) -> StyleBoxFlat:
+	var box: StyleBoxFlat = StyleBoxFlat.new()
+	box.bg_color = fill
+	box.border_color = border
+	box.set_border_width_all(width)
+	box.set_corner_radius_all(6)
+	return box
 
 
 func after_ticks() -> void:
 	_trails = simulation.trails.duplicate(true)
 
+
+# --- Things the main scene tells the view to show ---------------------------
+
+## Sets the bubble over a person. A changed text makes the bubble pop.
+func show_activity(person_id: String, text: String) -> void:
+	if not _bubbles.has(person_id) or _bubbles[person_id]["text"] != text:
+		_bubbles[person_id] = {"text": text, "since": Time.get_ticks_msec()}
+
+
+## A short text that rises and fades from a point in the world.
+func add_float(point: Array, lift: float, text: String, color: Color) -> void:
+	_floats.append({"text": text, "point": point, "lift": lift, "since": Time.get_ticks_msec(), "color": color})
+	while _floats.size() > MAX_FLOATS:
+		_floats.pop_front()
+
+
+## A note over a house about someone inside it.
+func add_house_note(building_id: String, text: String) -> void:
+	_house_notes[building_id] = {"text": text, "since": Time.get_ticks_msec()}
+
+
+## A notice across the top of the map.
+func add_toast(text: String) -> void:
+	_toasts.append({"text": text, "since": Time.get_ticks_msec()})
+	while _toasts.size() > 3:
+		_toasts.pop_front()
+
+
+## Where a person is on the map: their own spot outdoors, or the roof of the
+## building they are in. Returns {"point", "lift"}; empty if off the map.
+func anchor_of(person: Dictionary) -> Dictionary:
+	if person["at"] == Records.AT_OUTSIDE:
+		return {"point": [person["x"], person["y"]], "lift": 26.0}
+	if person["at"] == Records.AT_INSIDE:
+		return building_anchor(person["place_id"])
+	return {}
+
+
+func building_anchor(building_id: String) -> Dictionary:
+	var building: Dictionary = area.buildings[building_id]
+	return {"point": building["door"], "lift": float(building["stories"]) * STORY_HEIGHT_INCHES * _scale + 34.0}
+
+
+# --- Projection --------------------------------------------------------------
 
 ## World inches to screen pixels. East runs down-right, north runs up-right.
 func to_screen(point: Array) -> Vector2:
@@ -83,6 +163,14 @@ func _polygon(points: Array, lift: float = 0.0) -> PackedVector2Array:
 	return result
 
 
+func _closed(points: PackedVector2Array) -> PackedVector2Array:
+	var closed: PackedVector2Array = points.duplicate()
+	closed.append(points[0])
+	return closed
+
+
+# --- Drawing -----------------------------------------------------------------
+
 func _draw() -> void:
 	if simulation == null:
 		return
@@ -97,21 +185,34 @@ func _draw() -> void:
 	var home_id: String = ""
 	if selected_id != "":
 		home_id = simulation.state.households[simulation.state.people[selected_id]["household_id"]]["home_id"]
+	var night: float = night_amount()
 
 	# Buildings from the back of the view to the front.
 	var order: Array = area.sorted_building_ids()
 	order.sort_custom(func(a: String, b: String) -> bool:
 		return to_screen(area.door_of(a)).y < to_screen(area.door_of(b)).y)
 	for building_id: String in order:
-		_draw_building(area.buildings[building_id], building_id == home_id)
+		_draw_building(area.buildings[building_id], building_id == home_id, night)
+
+	if night > 0.0:
+		draw_rect(Rect2(Vector2.ZERO, VIEW_SIZE), Color(COLOR_NIGHT, night * 0.5))
+		for building_id: String in order:
+			_draw_lit_window(area.buildings[building_id])
 
 	_draw_people()
+	_draw_house_notes()
+	_draw_floats()
+	_draw_toasts()
 
 
-func _closed(points: PackedVector2Array) -> PackedVector2Array:
-	var closed: PackedVector2Array = points.duplicate()
-	closed.append(points[0])
-	return closed
+## 0 in full daylight, 1 in the middle of the night.
+func night_amount() -> float:
+	var minute: float = float(simulation.clock.minute_of_day)
+	if minute >= 420.0 and minute <= 1080.0:      # 07:00 to 18:00
+		return 0.0
+	if minute > 1080.0:                           # dusk until 21:00
+		return clampf((minute - 1080.0) / 180.0, 0.0, 1.0)
+	return clampf((420.0 - minute) / 120.0, 0.0, 1.0)  # dawn from 05:00
 
 
 func _draw_street(street: Dictionary) -> void:
@@ -130,7 +231,16 @@ func _draw_street(street: Dictionary) -> void:
 	draw_string(_font, middle + Vector2(-60, 4), street["name"], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, COLOR_OUTLINE)
 
 
-func _draw_building(building: Dictionary, is_home: bool) -> void:
+func _occupants(building_id: String) -> Array:
+	var inside: Array = []
+	for person_id: String in simulation.state.sorted_person_ids():
+		var person: Dictionary = simulation.state.people[person_id]
+		if person["at"] == Records.AT_INSIDE and person["place_id"] == building_id:
+			inside.append(person)
+	return inside
+
+
+func _draw_building(building: Dictionary, is_home: bool, night: float) -> void:
 	var footprint: Array = building["footprint"]
 	var height: float = float(building["stories"]) * STORY_HEIGHT_INCHES * _scale
 	var base: PackedVector2Array = _polygon(footprint)
@@ -146,17 +256,37 @@ func _draw_building(building: Dictionary, is_home: bool) -> void:
 	draw_colored_polygon(top, COLOR_HOME_ROOF if is_home else COLOR_ROOF)
 	draw_polyline(_closed(top), COLOR_OUTLINE, 1.0)
 
-	var inside: int = 0
-	for person_id: String in simulation.state.people:
-		var person: Dictionary = simulation.state.people[person_id]
-		if person["at"] == Records.AT_INSIDE and person["place_id"] == building["id"]:
-			inside += 1
-	var centre: Vector2 = Vector2.ZERO
-	for point: Vector2 in top:
-		centre += point
-	centre /= float(top.size())
-	if inside > 0:
-		draw_string(_font, centre + Vector2(-22, 5), "%d inside" % inside, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+	var inside: Array = _occupants(building["id"])
+	if not inside.is_empty():
+		var asleep: int = 0
+		for person: Dictionary in inside:
+			if not person["action"].is_empty() and person["action"]["started"] and person["action"]["kind"] == "sleep":
+				asleep += 1
+		var label: String = "%d inside" % inside.size()
+		if asleep == inside.size():
+			label = "%d asleep" % asleep
+		elif asleep > 0 and night > 0.0:
+			label = "%d in, %d asleep" % [inside.size(), asleep]
+		var centre: Vector2 = Vector2.ZERO
+		for point: Vector2 in top:
+			centre += point
+		centre /= float(top.size())
+		draw_string(_font, centre + Vector2(-30, 5), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+
+
+## At night, a house with someone awake inside shows a lit window.
+func _draw_lit_window(building: Dictionary) -> void:
+	var awake: bool = false
+	for person: Dictionary in _occupants(building["id"]):
+		var action: Dictionary = person["action"]
+		if action.is_empty() or not (action["started"] and action["kind"] == "sleep"):
+			awake = true
+	if not awake:
+		return
+	var height: float = float(building["stories"]) * STORY_HEIGHT_INCHES * _scale
+	var at: Vector2 = to_screen(building["door"]) - Vector2(0, height * 0.45)
+	draw_rect(Rect2(at - Vector2(5, 6), Vector2(10, 12)), Color(1.0, 0.88, 0.45))
+	draw_rect(Rect2(at - Vector2(5, 6), Vector2(10, 12)), COLOR_OUTLINE, false, 1.0)
 
 
 ## Where to draw a person this frame: along the path walked in the latest minute.
@@ -180,13 +310,12 @@ func _animated_position(person: Dictionary) -> Vector2:
 
 func _draw_people() -> void:
 	_screen_positions.clear()
+	var now: int = Time.get_ticks_msec()
 	var visible: Array = []
 	for person_id: String in simulation.state.sorted_person_ids():
 		var person: Dictionary = simulation.state.people[person_id]
-		# Someone who walked this minute is shown on the way even if now indoors.
-		if person["at"] == Records.AT_OUTSIDE or (_trails.has(person_id) and minute_fraction < 1.0):
-			if person["at"] == Records.AT_OFFMAP and not _trails.has(person_id):
-				continue
+		var walking: bool = _trails.has(person_id) and minute_fraction < 1.0
+		if person["at"] == Records.AT_OUTSIDE or walking:
 			_screen_positions[person_id] = _animated_position(person)
 			visible.append(person)
 	# People standing on the same spot are fanned out so each can be seen.
@@ -196,23 +325,127 @@ func _draw_people() -> void:
 		var count: int = taken.get(spot, 0)
 		taken[spot] = count + 1
 		if count > 0:
-			_screen_positions[person["id"]] += Vector2(0, 20.0 * count)
-	# A line between two people talking outdoors.
+			_screen_positions[person["id"]] += Vector2(0, FAN_SPACING * count)
+
+	# A bright line between two people talking outdoors.
 	for person: Dictionary in visible:
 		var action: Dictionary = person["action"]
 		if not action.is_empty() and action["kind"] == "talk" and _screen_positions.has(action["other_id"]):
-			draw_line(_screen_positions[person["id"]], _screen_positions[action["other_id"]], COLOR_TALK, 2.0)
-	for person: Dictionary in visible:
-		var position_on_screen: Vector2 = _screen_positions[person["id"]]
-		var players: bool = simulation.state.households[person["household_id"]]["player_controlled"]
-		if person["id"] == selected_id:
-			draw_circle(position_on_screen, PERSON_RADIUS + 4.0, Color.WHITE)
-		draw_circle(position_on_screen, PERSON_RADIUS, COLOR_PLAYER if players else COLOR_NEIGHBOR)
-		draw_arc(position_on_screen, PERSON_RADIUS, 0.0, TAU, 20, COLOR_OUTLINE, 1.0)
-		var talking: bool = not person["action"].is_empty() and person["action"]["kind"] == "talk"
-		var label: String = person["given_name"] + (" (talking)" if talking else "")
-		draw_string(_font, position_on_screen + Vector2(11, 4), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COLOR_OUTLINE)
+			draw_line(_screen_positions[person["id"]], _screen_positions[action["other_id"]], COLOR_TALK, 3.0)
 
+	var pulse: float = 0.5 + 0.5 * sin(float(now) / 180.0)
+	for person: Dictionary in visible:
+		var at: Vector2 = _screen_positions[person["id"]]
+		var players: bool = simulation.state.households[person["household_id"]]["player_controlled"]
+		var talking: bool = not person["action"].is_empty() and person["action"]["kind"] == "talk"
+		if talking:
+			draw_arc(at, PERSON_RADIUS + 5.0 + 3.0 * pulse, 0.0, TAU, 24, COLOR_TALK, 2.5)
+		if person["id"] == selected_id:
+			draw_circle(at, PERSON_RADIUS + 4.0, Color.WHITE)
+		draw_circle(at, PERSON_RADIUS, COLOR_PLAYER if players else COLOR_NEIGHBOR)
+		draw_arc(at, PERSON_RADIUS, 0.0, TAU, 20, COLOR_OUTLINE, 1.0)
+
+	# Bubbles last, so they are never hidden behind another person.
+	for person: Dictionary in visible:
+		var bubble: Dictionary = _bubbles.get(person["id"], {})
+		var text: String = person["given_name"]
+		var since: int = 0
+		if not bubble.is_empty():
+			var activity: String = bubble["text"]
+			text = "%s: %s%s" % [person["given_name"], activity.left(1).to_lower(), activity.substr(1)]
+			since = bubble["since"]
+		# The bubble sits to the right unless that would cover someone else.
+		var at: Vector2 = _screen_positions[person["id"]]
+		var size: Vector2 = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13) + Vector2(12, 7)
+		var right: Rect2 = Rect2(at + Vector2(12, -10 - size.y), size).grow(PERSON_RADIUS)
+		var covered: bool = false
+		for other_id: String in _screen_positions:
+			if other_id != person["id"] and right.has_point(_screen_positions[other_id]):
+				covered = true
+		var anchor: Vector2 = at + (Vector2(-12 - size.x, -10) if covered else Vector2(12, -10))
+		_draw_bubble(anchor, text, now - since)
+
+
+## A rounded label. A new one pops out and is highlighted for a few seconds.
+func _draw_bubble(anchor: Vector2, text: String, age_ms: int) -> void:
+	var size: Vector2 = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13) + Vector2(12, 7)
+	var grow: float = 1.0
+	if age_ms < BUBBLE_POP_MS:
+		grow = 0.5 + 0.65 * float(age_ms) / float(BUBBLE_POP_MS)   # overshoots slightly, then settles
+	elif age_ms < BUBBLE_POP_MS * 2:
+		grow = 1.15 - 0.15 * float(age_ms - BUBBLE_POP_MS) / float(BUBBLE_POP_MS)
+	# Grow from the middle of the bubble so it pops in place.
+	var middle: Vector2 = anchor + Vector2(size.x / 2.0, -size.y / 2.0)
+	draw_set_transform(middle - Vector2(size.x / 2.0, -size.y / 2.0) * grow, 0.0, Vector2(grow, grow))
+	var rect: Rect2 = Rect2(Vector2(0, -size.y), size)
+	draw_style_box(_bubble_box_fresh if age_ms < BUBBLE_FRESH_MS else _bubble_box, rect)
+	draw_string(_font, Vector2(6, -7), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, COLOR_NOTE)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_house_notes() -> void:
+	var now: int = Time.get_ticks_msec()
+	for building_id: String in _house_notes.keys():
+		var note: Dictionary = _house_notes[building_id]
+		var age: int = now - int(note["since"])
+		if age > HOUSE_NOTE_MS:
+			_house_notes.erase(building_id)
+			continue
+		var anchor: Dictionary = building_anchor(building_id)
+		var text: String = note["text"]
+		var width: float = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 12.0
+		_draw_bubble(to_screen(anchor["point"]) - Vector2(width / 2.0, float(anchor["lift"])), text, age)
+
+
+func _draw_floats() -> void:
+	var now: int = Time.get_ticks_msec()
+	var kept: Array = []
+	for item: Dictionary in _floats:
+		var age: int = now - int(item["since"])
+		if age > FLOAT_MS:
+			continue
+		kept.append(item)
+		var progress: float = float(age) / float(FLOAT_MS)
+		var at: Vector2 = to_screen(item["point"]) - Vector2(0, float(item["lift"]) + 34.0 * progress)
+		var color: Color = item["color"]
+		var alpha: float = 1.0 - progress * progress
+		var text: String = item["text"]
+		var width: float = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+		draw_string_outline(_font, at - Vector2(width / 2.0, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, 4, Color(1, 1, 1, alpha))
+		draw_string(_font, at - Vector2(width / 2.0, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(color, alpha))
+	_floats = kept
+
+
+func _draw_toasts() -> void:
+	var now: int = Time.get_ticks_msec()
+	var kept: Array = []
+	var row: int = 0
+	for index: int in range(_toasts.size() - 1, -1, -1):
+		var toast: Dictionary = _toasts[index]
+		var age: int = now - int(toast["since"])
+		if age > TOAST_MS:
+			continue
+		kept.push_front(toast)
+		var text: String = toast["text"]
+		var size: Vector2 = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16) + Vector2(24, 12)
+		# Stacked upward from the bottom of the map, newest lowest, clear of the houses.
+		var top_left: Vector2 = Vector2(MAP_RECT.get_center().x - size.x / 2.0, MAP_RECT.end.y - (row + 1) * (size.y + 6.0))
+		var fade: float = clampf(float(TOAST_MS - age) / 600.0, 0.0, 1.0)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		modulate_box(_toast_box, fade)
+		draw_style_box(_toast_box, Rect2(top_left, size))
+		draw_string(_font, top_left + Vector2(12, size.y - 10.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, fade))
+		row += 1
+	modulate_box(_toast_box, 1.0)
+	_toasts = kept
+
+
+func modulate_box(box: StyleBoxFlat, alpha: float) -> void:
+	box.bg_color.a = 0.92 * alpha
+	box.border_color.a = alpha
+
+
+# --- Input -------------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):
