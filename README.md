@@ -2,7 +2,7 @@
 
 An original historical neighborhood life-simulation game set in the Linden neighborhood of Malden, Massachusetts, played across the whole decade from 1950 through 1959.
 
-**Status (2026-11-13): M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B has not started and is not authorized.** No real Linden geography is in the game yet. The first real area will be the Oliver Street end of Maynard Street, once its map readings are confirmed.
+**Status (2026-11-13): M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B is authorized (D-046) and in progress.** No real Linden geography is in the game yet. The first real area will be the Oliver Street end of Maynard Street, once its map readings are confirmed.
 
 ## Where to start
 

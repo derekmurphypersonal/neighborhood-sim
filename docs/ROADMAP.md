@@ -1,6 +1,6 @@
 # Roadmap and First Playable Milestone
 
-Status: updated 2026-11-13. **M0 is reviewed and accepted. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B has not started and is not authorized.** See [DECISIONS.md](../DECISIONS.md).
+Status: updated 2026-11-13. **M0 is reviewed and accepted. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B is authorized (D-046) and in progress.** See [DECISIONS.md](../DECISIONS.md).
 
 Milestones are defined by what a player can do at the end of each, not by which systems exist.
 
@@ -50,7 +50,7 @@ It deliberately does **not** include: needs, schedules, movement, conversations,
 
 ### Left over from M0
 
-- **Mac verification.** Derek has Godot 4.7.2 on the Mac, has played M1-A there, and reported one failing test, `test_save_file_round_trip`. That failure was reproduced on Linux by making the per-user data folder unwritable, and fixed (see M1-A stabilization below). The Mac's own output for the test, hash and self-check commands in the [README](../README.md) has not been reported since the fix.
+- **Mac verification.** Derek has Godot 4.7.2 on the Mac, has played M1-A there, and reported one failing test, `test_save_file_round_trip`. That failure was reproduced on Linux by making the per-user data folder unwritable, and fixed (see M1-A stabilization below). After the fix Derek ran the README's commands on the Mac (Godot 4.7.2) and reported: 59 tests, 270 checks, 0 failed; data validation 0 errors; the decade hash and the three-day hash identical to the Linux values; self-check passed. Identical hashes on macOS and Linux confirm the simulation reproduces across machines.
 - **Version control.** The folder is a git repository whose remote is Derek's personal repository, https://github.com/derekmurphypersonal/neighborhood-sim (D-011). Pushing is done from the Mac, because the assistant's environment has no GitHub credentials for it. Never add a remote under the `iuvonauts` organization.
 - **Historical data.** None entered. Maynard Street is chosen (D-037); its readings await confirmation.
 
@@ -91,17 +91,17 @@ Not in M1-A, by design: interiors, an enterable building, wages tied to days wor
 #### M1-A stabilization (2026-11-13)
 
 - **The failing test.** `test_save_file_round_trip` wrote its file into the per-user data folder. Where that folder cannot be written the write failed, and the test then crashed reading a save that was not there. The test now uses a scratch folder of its own under the system temp folder and cleans up after itself.
-- **The save contract** is now explicit and tested (proposed as P-015): `SaveGame.to_text()` writes a whole save; `SaveGame.restore()` is the one call that turns save text back into a simulation and never crashes on bad input; `SaveGame.parse()` checks a save has every part; `Simulation.from_save()` is the low-level step `restore()` uses. File writing creates its folder and reports the reason for any failure.
+- **The save contract** is now explicit and tested (D-047): `SaveGame.to_text()` writes a whole save; `SaveGame.restore()` is the one call that turns save text back into a simulation and never crashes on bad input; `SaveGame.parse()` checks a save has every part; `Simulation.from_save()` is the low-level step `restore()` uses. File writing creates its folder and reports the reason for any failure.
 - **A scene self-check** (`-- --self-check`) loads the main scene, confirms the audio loaded, gives an order and runs a day and a half through the same path as play.
 - **Verified on Linux, Godot 4.7.2:** 59 tests, 270 checks, 0 failed, also with the per-user data folder unwritable; data validation 0 errors; decade hash and three-day hash unchanged from the README; self-check passed headless and with drawing under a virtual display.
-- **Not verified:** any of this on the Mac since the fix; how the game looks and sounds, beyond Derek's earlier acceptance.
+- **Verified on the Mac by Derek** after the fix, with the same results and the same hashes.
+- **Not verified by any automated check:** how the game looks and sounds.
 
 ### Before M1-B can begin
 
-1. Derek reviews this stabilization report and authorizes M1-B.
-2. Ideally the README's test, decade and self-check commands are run once on the Mac and the output reported.
+Done: Derek reviewed the stabilization, ran the checks on the Mac, and authorized M1-B on 2026-11-13 (D-046).
 
-### M1-B: the complete first week — not started, not authorized
+### M1-B: the complete first week — authorized (D-046), in progress
 
 Scope and order as set by Derek (D-045). Implement only this, in this order, entirely on the fictional fixture:
 

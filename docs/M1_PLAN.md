@@ -1,6 +1,6 @@
 # M1 Implementation Plan (proposal)
 
-Status: updated 2026-11-13. **This is the plan Derek approved for M1. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B has not started and is not authorized.** Current status and the authoritative M1-B scope are in [ROADMAP.md](ROADMAP.md). Sections 6 to 9 below were written before M1-A was built; each now carries a note saying what is obsolete. One departure from this plan: step 3 kept records as plain dictionaries under a no-fractions rule instead of typed classes (confirmed as D-042).
+Status: updated 2026-11-13. **This is the plan Derek approved for M1. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B is authorized (D-046) and in progress.** Current status and the authoritative M1-B scope are in [ROADMAP.md](ROADMAP.md). Sections 6 to 9 below were written before M1-A was built; each now carries a note saying what is obsolete. One departure from this plan: step 3 kept records as plain dictionaries under a no-fractions rule instead of typed classes (confirmed as D-042).
 
 The M1 milestone and its outcome are unchanged (D-021, [ROADMAP.md](ROADMAP.md)): one week on one block, with one player household among autonomous neighbors, that is enjoyable to watch and direct. This plan only splits the work in two.
 
@@ -88,7 +88,7 @@ Each step ends with tests passing and, from step 5 on, something visible. Nothin
 9. **Player commands.** Select, send, talk. Commands are timestamped inputs, recorded so runs can be replayed.
 10. **Feed and panels.** Event feed, household panel, relationship panel. M1-A review with Derek.
 
-**M1-B** (as set by Derek, D-045; not authorized)
+**M1-B** (as set by Derek, D-045; authorized, D-046)
 
 1. Expand the fictional fixture scenario to four to six households and fifteen to twenty-five residents.
 2. Add seven-day schedules with clear weekday, Saturday and Sunday behavior.
@@ -164,7 +164,7 @@ These are written in step 3, before any M1 system exists, and every later system
 
 ## 7. Architectural risks found in M0
 
-**Historical, with outcomes.** This is the review of the M0 code made before M1-A. Outcome after M1-A: R-1, R-2, R-3, R-4, R-6 and R-7 were fixed as recommended (R-2 by the no-fractions rule, D-042). R-5 was fixed by replacing the seeding with a self-contained function; agreement between machines is still unverified. R-8 is open question Q-016. R-9 is unchanged. R-10 is settled in code and noted in [WORLD_DATA_MODEL.md §14](WORLD_DATA_MODEL.md).
+**Historical, with outcomes.** This is the review of the M0 code made before M1-A. Outcome after M1-A: R-1, R-2, R-3, R-4, R-6 and R-7 were fixed as recommended (R-2 by the no-fractions rule, D-042). R-5 was fixed by replacing the seeding with a self-contained function; Derek's Mac run produced the same hashes as Linux, so agreement between machines is confirmed. R-8 is open question Q-016. R-9 is unchanged. R-10 is settled in code and noted in [WORLD_DATA_MODEL.md §14](WORLD_DATA_MODEL.md).
 
 Reviewed against what M1 will ask of the code. Ordered by how costly each would be if left.
 

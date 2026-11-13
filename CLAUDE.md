@@ -6,7 +6,7 @@ Instructions for Claude (and any other AI assistant) working in this repository.
 
 An original historical neighborhood life-simulation game set in Linden, Malden, Massachusetts, played through 1950–1959. Real place, fictional people. Gameplay and emergent stories come first; history supplies the stage and must not be falsified.
 
-Current phase: **M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B has not started and is not authorized.** See `docs/ROADMAP.md` and `docs/M1_PLAN.md`. Maynard Street research is `probable` and must not be entered as historical data until confirmed.
+Current phase: **M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B is authorized (D-046) and in progress.** See `docs/ROADMAP.md` and `docs/M1_PLAN.md`. Maynard Street research is `probable` and must not be entered as historical data until confirmed.
 
 ## Read before working
 

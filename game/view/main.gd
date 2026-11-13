@@ -86,8 +86,10 @@ func _ready() -> void:
 	if _screenshot_path != "":
 		_take_screenshot()
 		return
-	_setup_audio()
-	if args.has("--self-check"):
+	var checking: bool = args.has("--self-check")
+	_setup_audio(not checking)
+	if checking:
+		sound_on = false  # the check confirms the audio loads; it does not play it
 		_self_check()
 
 
@@ -234,13 +236,14 @@ func _announce_event(event: Dictionary) -> void:
 
 # --- Sound -------------------------------------------------------------------
 
-func _setup_audio() -> void:
+func _setup_audio(start_music: bool) -> void:
 	_music = _player(MUSIC_FILE, MUSIC_VOLUME_DB)
 	_chime_talk = _player("chime_talk.ogg", CHIME_VOLUME_DB)
 	_chime_notice = _player("chime_notice.ogg", CHIME_VOLUME_DB)
 	if _music != null:
 		(_music.stream as AudioStreamOggVorbis).loop = true
-		_music.play()
+		if start_music:
+			_music.play()
 	else:
 		music_on = false
 
