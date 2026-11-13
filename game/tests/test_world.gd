@@ -12,7 +12,8 @@ const SCENARIO: String = "fixture_street_spring_1950"
 func test_scenario_loads_cleanly() -> void:
 	var world: Dictionary = WorldLoader.load_world(SCENARIO)
 	check_eq(world["errors"], [], "no loading errors")
-	check_eq(world["households"].size(), 3, "households from the scenario")
+	check_eq(world["households"].size(), 5, "households from the scenario")
+	check_eq(world["persons"].size(), 17, "residents from the scenario")
 	check(world["fingerprints"].size() >= 4, "every data file read is fingerprinted")
 
 

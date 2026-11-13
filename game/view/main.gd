@@ -312,7 +312,7 @@ func _self_check() -> void:
 	print("SELF-CHECK  %d events in the log; %d people have a bubble" % [simulation.state.event_log.size(), _last_activity.size()])
 	if simulation.state.event_log.is_empty():
 		problems.append("nothing happened in a day and a half")
-	if _last_activity.size() != simulation.state.people.size():
+	if _last_activity.size() != simulation.state.people.size():  # one per resident
 		problems.append("not everyone has an activity bubble")
 	for problem: String in problems:
 		print("SELF-CHECK  PROBLEM: " + problem)

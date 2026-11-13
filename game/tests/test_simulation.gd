@@ -18,8 +18,8 @@ func _decade(seed_value: int) -> Simulation:
 
 func test_scenario_starts_in_spring_1950() -> void:
 	var simulation: Simulation = Simulation.new_game(WorldLoader.load_world(SCENARIO), 1)
-	check_eq(simulation.state.people.size(), 10, "ten residents")
-	check_eq(simulation.state.households.size(), 3, "three households")
+	check_eq(simulation.state.people.size(), 17, "seventeen residents (M1-B asks for fifteen to twenty-five)")
+	check_eq(simulation.state.households.size(), 5, "five households (M1-B asks for four to six)")
 	check_eq(simulation.clock.describe(), "Monday 1950-04-03 06:00", "the scenario's own start (D-034)")
 	check_eq(simulation.state.player_household_id(), "fx_hh_1", "one player household")
 
@@ -43,7 +43,7 @@ func test_every_birthday_is_logged() -> void:
 			birthdays += 1
 			if event["person_id"] == "fx_p_04":
 				leapling_days.append(SimDate.to_iso(event["day"]))
-	check_eq(birthdays, 100, "ten birthdays each for ten residents")
+	check_eq(birthdays, 170, "ten birthdays each for seventeen residents")
 	check(leapling_days.has("1952-02-29") and leapling_days.has("1953-03-01"), "leap-day birthday observed correctly")
 	check(ids_in_order, "events are numbered in order")
 

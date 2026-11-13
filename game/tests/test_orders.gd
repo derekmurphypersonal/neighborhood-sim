@@ -27,11 +27,15 @@ func test_go_to_sends_a_person_there() -> void:
 	var simulation: Simulation = _new()
 	simulation.give_order("fx_p_01", {"kind": "go_to", "place_id": "fx_bd_6"})
 	# She may be mid-conversation when told; she finishes it first (25 minutes
-	# at most), walks over, and stays half an hour.
-	simulation.advance_minutes(40)
-	var person: Dictionary = simulation.state.people["fx_p_01"]
-	check_eq(person["at"], Records.AT_OUTSIDE, "she is outdoors")
-	check_eq([person["x"], person["y"]], simulation.area.front_of("fx_bd_6"), "at the front of the house she was sent to")
+	# at most) and then walks over. Once there she may fall into talk with
+	# someone else, so the check is that she arrives, not that she stays.
+	var arrived: bool = false
+	for minute: int in 40:
+		simulation.tick()
+		var person: Dictionary = simulation.state.people["fx_p_01"]
+		if person["at"] == Records.AT_OUTSIDE and [person["x"], person["y"]] == simulation.area.front_of("fx_bd_6"):
+			arrived = true
+	check(arrived, "she reached the front of the house she was sent to within forty minutes")
 
 
 func test_talk_to_starts_a_conversation() -> void:
