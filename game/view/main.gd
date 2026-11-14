@@ -13,6 +13,7 @@ const Records := preload("res://sim/state/records.gd")
 const WorldView := preload("res://view/world_view.gd")
 const Hud := preload("res://view/hud.gd")
 const Describe := preload("res://view/describe.gd")
+const WeekSummary := preload("res://sim/reports/week_summary.gd")
 
 const SCENARIO: String = "fixture_street_spring_1950"
 ## Game minutes per real second for each speed setting.
@@ -36,6 +37,7 @@ var sound_on: bool = true
 var _pending_minutes: float = 0.0
 var _screenshot_path: String = ""
 var _screenshot_minutes: int = 0
+var _screenshot_sheet: String = ""
 var _music: AudioStreamPlayer
 var _chime_talk: AudioStreamPlayer
 var _chime_notice: AudioStreamPlayer
@@ -44,6 +46,10 @@ var _last_activity: Dictionary = {}
 var _last_at: Dictionary = {}
 var _last_funds: Dictionary = {}
 var _seen_events: int = 0
+## The Monday of the week now being played, for the end-of-week summary.
+var _week_start: int = 0
+## The speed to go back to when a sheet is closed.
+var _speed_before_sheet: int = -1
 
 
 func _ready() -> void:
@@ -74,12 +80,17 @@ func _ready() -> void:
 	hud.order_given.connect(_give_order)
 	hud.music_toggled.connect(_set_music)
 	hud.sound_toggled.connect(func(on: bool) -> void: sound_on = on)
+	hud.week_requested.connect(func() -> void: _show_week(_week_start, "This week so far"))
+	hud.sheet_closed.connect(_on_sheet_closed)
+	_week_start = WeekSummary.week_start(simulation.clock.day_index)
 	layer.add_child(hud)
 
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	for i: int in args.size() - 1:
 		if args[i] == "--screenshot":
 			_screenshot_path = args[i + 1]
+		if args[i] == "--show":
+			_screenshot_sheet = args[i + 1]
 		if args[i] == "--minutes" and args[i + 1].is_valid_int():
 			_screenshot_minutes = args[i + 1].to_int()
 
@@ -102,6 +113,10 @@ func _process(delta: float) -> void:
 		simulation.advance_minutes(ticks)
 		world_view.after_ticks()
 		_watch(true)
+		var week_now: int = WeekSummary.week_start(simulation.clock.day_index)
+		if week_now != _week_start:
+			_show_week(_week_start, "The week that was")
+			_week_start = week_now
 	# How far into the current minute we are, for smooth walking.
 	world_view.minute_fraction = clampf(_pending_minutes, 0.0, 1.0) if SPEEDS[speed_index] > 0 else 1.0
 	world_view.selected_id = selected_id
@@ -122,6 +137,30 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				speed_index = 3
 			KEY_M:
 				_set_music(not music_on)
+
+
+# --- Sheets ------------------------------------------------------------------
+
+## Opens a sheet over the game and stops the clock while it is read.
+func _open_sheet(title: String, text: String, actions: Array = [], close_label: String = "Continue") -> void:
+	if _speed_before_sheet < 0:
+		_speed_before_sheet = speed_index
+	speed_index = 0
+	_pending_minutes = 0.0
+	hud.show_sheet(title, text, actions, close_label)
+
+
+func _on_sheet_closed() -> void:
+	if _speed_before_sheet >= 0:
+		speed_index = _speed_before_sheet
+	_speed_before_sheet = -1
+
+
+## The player's household's week, made from the event log.
+func _show_week(first_day: int, title: String) -> void:
+	var household_id: String = simulation.state.player_household_id()
+	var summary: Dictionary = WeekSummary.summarize(simulation.state, household_id, first_day, first_day + 6)
+	_open_sheet("%s: the %s" % [title, simulation.state.households[household_id]["name"]], Describe.week_summary(simulation, summary))
 
 
 # --- Selecting and ordering --------------------------------------------------
@@ -327,12 +366,23 @@ func _self_check() -> void:
 	print("SELF-CHECK  %d events in the log; %d people have a bubble" % [simulation.state.event_log.size(), _last_activity.size()])
 	if simulation.state.event_log.is_empty():
 		problems.append("nothing happened in a day and a half")
+	_show_week(_week_start, "This week so far")
+	if not hud.sheet_is_open():
+		problems.append("the week summary did not open")
+	hud.close_sheet()
 	if _last_activity.size() != simulation.state.people.size():  # one per resident
 		problems.append("not everyone has an activity bubble")
 	for problem: String in problems:
 		print("SELF-CHECK  PROBLEM: " + problem)
 	print("SELF-CHECK  %s" % ("passed" if problems.is_empty() else "FAILED"))
 	get_tree().quit(0 if problems.is_empty() else 1)
+
+
+## Opens the sheet asked for with "--show <name>" before a screenshot.
+func _show_for_screenshot() -> void:
+	match _screenshot_sheet:
+		"week":
+			_show_week(WeekSummary.week_start(simulation.clock.day_index - 1), "The week that was")
 
 
 ## Development aid: run some minutes, save a picture of the screen, and quit.
@@ -348,6 +398,7 @@ func _take_screenshot() -> void:
 	world_view.selected_id = selected_id
 	world_view.queue_redraw()
 	hud.refresh(selected_id, speed_index, music_on, sound_on)
+	_show_for_screenshot()
 	await get_tree().create_timer(0.6).timeout  # let bubbles finish popping
 	world_view.queue_redraw()
 	hud.refresh(selected_id, speed_index, music_on, sound_on)

@@ -7,6 +7,8 @@ signal person_chosen(person_id: String)
 signal order_given(person_id: String, order: Dictionary)
 signal music_toggled(on: bool)
 signal sound_toggled(on: bool)
+signal week_requested
+signal sheet_closed
 
 const Simulation := preload("res://sim/simulation.gd")
 const SimDate := preload("res://sim/clock/sim_date.gd")
@@ -33,6 +35,10 @@ var _music_button: Button
 var _sound_button: Button
 ## event id -> the moment it first appeared in the feed
 var _first_shown: Dictionary = {}
+var _sheet: PanelContainer
+var _sheet_title: Label
+var _sheet_text: RichTextLabel
+var _sheet_buttons: HBoxContainer
 
 
 func setup(sim: Simulation) -> void:
@@ -42,6 +48,7 @@ func setup(sim: Simulation) -> void:
 	_build_top_bar()
 	_build_side_panel()
 	_build_feed()
+	_build_sheet()
 
 
 func show_message(text: String) -> void:
@@ -71,11 +78,14 @@ func _build_top_bar() -> void:
 	bar.add_child(_music_button)
 	_sound_button = _toggle("Chimes", func(on: bool) -> void: sound_toggled.emit(on))
 	bar.add_child(_sound_button)
+	bar.add_child(_button("This week", func() -> void: week_requested.emit()))
 	if simulation.area.placeholder:
 		var banner: Label = Label.new()
+		banner.position = Vector2(640, 46)
 		banner.text = "FICTIONAL TEST STREET: not a real place"
+		banner.add_theme_font_size_override("font_size", 13)
 		banner.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
-		bar.add_child(banner)
+		add_child(banner)
 	_message_label = Label.new()
 	_message_label.position = Vector2(20, 48)
 	_message_label.text = "Click one of your household (blue), then a house to send them there, or a neighbor to talk."
@@ -170,6 +180,71 @@ func _build_feed() -> void:
 	_feed.scroll_active = false
 	_feed.add_theme_font_size_override("normal_font_size", 13)
 	panel.add_child(_feed)
+
+
+## A sheet laid over the middle of the screen for something to read: the
+## week's summary, what is known about a building, the menu.
+func _build_sheet() -> void:
+	_sheet = PanelContainer.new()
+	_sheet.position = Vector2(290, 80)
+	_sheet.custom_minimum_size = Vector2(600, 520)
+	_sheet.visible = false
+	var box: StyleBoxFlat = StyleBoxFlat.new()
+	box.bg_color = Color(0.13, 0.15, 0.19, 0.97)
+	box.border_color = Color(1.0, 0.92, 0.55)
+	box.set_border_width_all(2)
+	box.set_corner_radius_all(6)
+	box.set_content_margin_all(16)
+	_sheet.add_theme_stylebox_override("panel", box)
+	add_child(_sheet)
+	var column: VBoxContainer = VBoxContainer.new()
+	column.add_theme_constant_override("separation", 10)
+	_sheet.add_child(column)
+	_sheet_title = Label.new()
+	_sheet_title.add_theme_font_size_override("font_size", 20)
+	column.add_child(_sheet_title)
+	_sheet_text = RichTextLabel.new()
+	_sheet_text.bbcode_enabled = true
+	_sheet_text.custom_minimum_size = Vector2(0, 400)
+	_sheet_text.add_theme_font_size_override("normal_font_size", 14)
+	_sheet_text.add_theme_font_size_override("bold_font_size", 14)
+	column.add_child(_sheet_text)
+	_sheet_buttons = HBoxContainer.new()
+	_sheet_buttons.add_theme_constant_override("separation", 10)
+	column.add_child(_sheet_buttons)
+
+
+## Shows the sheet. actions is a list of [label, Callable] for extra buttons;
+## a button to close the sheet is always added.
+func show_sheet(title: String, text: String, actions: Array = [], close_label: String = "Continue") -> void:
+	_sheet_title.text = title
+	_sheet_text.text = text
+	for child: Node in _sheet_buttons.get_children():
+		_sheet_buttons.remove_child(child)
+		child.queue_free()
+	for action: Array in actions:
+		_sheet_buttons.add_child(_button(action[0], action[1]))
+	_sheet_buttons.add_child(_button(close_label, close_sheet))
+	_sheet.visible = true
+	_sheet.reset_size()
+
+
+func close_sheet() -> void:
+	if _sheet.visible:
+		_sheet.visible = false
+		sheet_closed.emit()
+
+
+func sheet_is_open() -> bool:
+	return _sheet.visible
+
+
+func _button(text: String, on_press: Callable) -> Button:
+	var button: Button = Button.new()
+	button.text = text
+	button.focus_mode = Control.FOCUS_NONE
+	button.pressed.connect(on_press)
+	return button
 
 
 func _toggle(text: String, on_change: Callable) -> Button:

@@ -104,3 +104,58 @@ static func event(sim: RefCounted, entry: Dictionary) -> String:
 				given_name(sim, entry["person_id"]), given_name(sim, entry["other_id"]),
 			]
 	return str(entry["type"])
+
+
+## A household's week as text for the summary sheet. The summary itself is
+## made by sim/reports/week_summary.gd from the event log.
+static func week_summary(sim: RefCounted, summary: Dictionary) -> String:
+	var lines: Array[String] = []
+	lines.append("%s %s to %s %s" % [
+		SimDate.weekday_name(summary["first_day"]), SimDate.to_iso(summary["first_day"]),
+		SimDate.weekday_name(summary["last_day"]), SimDate.to_iso(summary["last_day"]),
+	])
+	lines.append("")
+	lines.append("[b]Money[/b]")
+	lines.append("  Wages paid: %s" % money(summary["wages_cents"]))
+	if summary["other_income_cents"] > 0:
+		lines.append("  Other income: %s" % money(summary["other_income_cents"]))
+	var owed: String = "" if summary["rent_short_cents"] == 0 else "  (still owed: %s)" % money(summary["rent_short_cents"])
+	lines.append("  Rent paid: %s%s" % [money(summary["rent_paid_cents"]), owed])
+	lines.append("  Groceries: %s for %d meals in %d %s" % [
+		money(summary["groceries_cents"]), summary["meals_bought"], summary["shopping_trips"],
+		"trip" if summary["shopping_trips"] == 1 else "trips",
+	])
+	var net: int = summary["net_cents"]
+	lines.append("  Over the week: %s%s" % ["up " if net >= 0 else "down ", money(absi(net))])
+	if summary["days_missed"] > 0:
+		lines.append("  Days of work missed: %d (%s in wages lost)" % [summary["days_missed"], money(summary["wages_lost_cents"])])
+	if summary["thin_meal_days"] > 0:
+		lines.append("  Days with nothing in the pantry: %d" % summary["thin_meal_days"])
+	if summary["times_short"] > 0:
+		lines.append("  Times short of money: %d" % summary["times_short"])
+	lines.append("")
+	lines.append("[b]Neighbors[/b]")
+	lines.append("  Talks with people outside the household: %d (%d minutes)" % [summary["conversations"], summary["minutes_talking"]])
+	lines.append("  First meetings: %d" % (summary["first_meetings"] as Array).size())
+	lines.append("  Where regard changed most:")
+	var shown: int = 0
+	var ranked: Array = (summary["neighbors"] as Array).duplicate()
+	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var size_a: int = absi(a["member_change"]) + absi(a["other_change"])
+		var size_b: int = absi(b["member_change"]) + absi(b["other_change"])
+		return size_a > size_b if size_a != size_b else (a["member_id"] + a["other_id"]) < (b["member_id"] + b["other_id"]))
+	for pair: Dictionary in ranked:
+		if shown == 5:
+			break
+		shown += 1
+		lines.append("    %s and %s, %d %s: %s %+d, %s %+d" % [
+			given_name(sim, pair["member_id"]), given_name(sim, pair["other_id"]), pair["talks"],
+			"talk" if pair["talks"] == 1 else "talks",
+			given_name(sim, pair["member_id"]), pair["member_change"], given_name(sim, pair["other_id"]), pair["other_change"],
+		])
+	if not (summary["birthdays"] as Array).is_empty():
+		lines.append("")
+		lines.append("[b]Birthdays[/b]")
+		for birthday: Dictionary in summary["birthdays"]:
+			lines.append("  %s turned %d." % [given_name(sim, birthday["person_id"]), birthday["age"]])
+	return "\n".join(lines)
