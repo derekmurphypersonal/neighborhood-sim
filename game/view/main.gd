@@ -13,6 +13,7 @@ const Records := preload("res://sim/state/records.gd")
 const WorldView := preload("res://view/world_view.gd")
 const Hud := preload("res://view/hud.gd")
 const Describe := preload("res://view/describe.gd")
+const BuildingInfo := preload("res://sim/reports/building_info.gd")
 const WeekSummary := preload("res://sim/reports/week_summary.gd")
 
 const SCENARIO: String = "fixture_street_spring_1950"
@@ -69,6 +70,7 @@ func _ready() -> void:
 	world_view.person_clicked.connect(_on_person_clicked)
 	world_view.building_clicked.connect(_on_building_clicked)
 	world_view.room_clicked.connect(_on_room_clicked)
+	world_view.building_info_requested.connect(_show_building)
 	add_child(world_view)
 
 	var layer: CanvasLayer = CanvasLayer.new()
@@ -154,6 +156,13 @@ func _on_sheet_closed() -> void:
 	if _speed_before_sheet >= 0:
 		speed_index = _speed_before_sheet
 	_speed_before_sheet = -1
+
+
+## What is known about a building: documented exterior, fictional interior
+## and fictional scenario content, each under its own heading.
+func _show_building(building_id: String) -> void:
+	var info: Dictionary = BuildingInfo.describe(simulation, building_id)
+	_open_sheet(info["label"], Describe.building_info(simulation, info), [], "Close")
 
 
 ## The player's household's week, made from the event log.
@@ -366,6 +375,8 @@ func _self_check() -> void:
 	print("SELF-CHECK  %d events in the log; %d people have a bubble" % [simulation.state.event_log.size(), _last_activity.size()])
 	if simulation.state.event_log.is_empty():
 		problems.append("nothing happened in a day and a half")
+	for building_id: String in simulation.area.sorted_building_ids():
+		_show_building(building_id)
 	_show_week(_week_start, "This week so far")
 	if not hud.sheet_is_open():
 		problems.append("the week summary did not open")
@@ -381,6 +392,10 @@ func _self_check() -> void:
 ## Opens the sheet asked for with "--show <name>" before a screenshot.
 func _show_for_screenshot() -> void:
 	match _screenshot_sheet:
+		"building":
+			_show_building(simulation.area.sorted_building_ids()[0])
+		"store":
+			_show_building(simulation.area.institution_of_kind("store"))
 		"week":
 			_show_week(WeekSummary.week_start(simulation.clock.day_index - 1), "The week that was")
 

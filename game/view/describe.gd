@@ -159,3 +159,64 @@ static func week_summary(sim: RefCounted, summary: Dictionary) -> String:
 		for birthday: Dictionary in summary["birthdays"]:
 			lines.append("  %s turned %d." % [given_name(sim, birthday["person_id"]), birthday["age"]])
 	return "\n".join(lines)
+
+
+const FACT_LABELS: Dictionary = {"building_type": "Kind of building", "stories": "Stories"}
+const DAY_KIND_LABELS: Array = [["weekday", "Weekdays"], ["saturday", "Saturday"], ["sunday", "Sunday"]]
+
+
+static func clock_time(minute: int) -> String:
+	@warning_ignore("integer_division")
+	return "%d:%02d" % [minute / 60, minute % 60]
+
+
+## What is known about a building, as text. The parts come from
+## sim/reports/building_info.gd and are kept apart here too: documented
+## exterior first, then the fictional interior, then the fictional scenario.
+static func building_info(sim: RefCounted, info: Dictionary) -> String:
+	var lines: Array[String] = []
+	var exterior: Dictionary = info["exterior"]
+	if info["area_placeholder"]:
+		lines.append("[color=#ffeb8c]FICTIONAL TEST BUILDING. This street is a made-up stand-in for development. It is not a real place.[/color]")
+		lines.append("")
+	lines.append("[b]Documented exterior[/b]")
+	if exterior["documented"]:
+		lines.append("  Research status: %s" % exterior["status"])
+		for fact: Dictionary in exterior["facts"]:
+			lines.append("  %s: %s" % [FACT_LABELS.get(fact["field"], fact["field"]), fact["value"]])
+		for source: Dictionary in exterior["sources"]:
+			lines.append("  Source %s, %s (finding %s)" % [source.get("source_id", "?"), source.get("locator", "?"), source.get("finding_id", "?")])
+		if exterior["reasoning"] != "":
+			lines.append("  Reasoning: %s" % exterior["reasoning"])
+	else:
+		lines.append("  Nothing is documented about this building.")
+		lines.append("")
+		lines.append("[b]Placeholder exterior (invented)[/b]")
+		for fact: Dictionary in exterior["facts"]:
+			lines.append("  %s: %s" % [FACT_LABELS.get(fact["field"], fact["field"]), fact["value"]])
+	lines.append("")
+	lines.append("[b]Interior (fictional)[/b]")
+	var interior: Dictionary = info["interior"]
+	if interior.is_empty():
+		lines.append("  No interior has been made for this building.")
+	else:
+		lines.append("  Invented layout \"%s\": %s." % [interior["name"], ", ".join(PackedStringArray(interior["rooms"])).to_lower()])
+		lines.append("  Interiors are never taken from the historical record.")
+	lines.append("")
+	lines.append("[b]In this scenario (fictional)[/b]")
+	var institution: Dictionary = info["institution"]
+	if not institution.is_empty():
+		var standing: String = "documented, %s" % institution["status"] if institution["documented"] else "invented, not a documented business"
+		lines.append("  %s (%s)" % [institution["name"], standing])
+		for entry: Array in DAY_KIND_LABELS:
+			var hours: Variant = institution["hours"].get(entry[0])
+			var open: String = "closed" if typeof(hours) != TYPE_ARRAY else "%s to %s" % [clock_time(int(hours[0])), clock_time(int(hours[1]))]
+			lines.append("    %s: %s" % [entry[1], open])
+	for household: Dictionary in info["households"]:
+		var names: PackedStringArray = []
+		for member_id: String in household["member_ids"]:
+			names.append(given_name(sim, member_id))
+		lines.append("  Home of the %s: %s. All residents are fictional." % [household["name"], ", ".join(names)])
+	if institution.is_empty() and (info["households"] as Array).is_empty():
+		lines.append("  Nobody lives or works here in this scenario.")
+	return "\n".join(lines)

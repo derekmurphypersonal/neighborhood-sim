@@ -81,14 +81,13 @@ func _build_top_bar() -> void:
 	bar.add_child(_button("This week", func() -> void: week_requested.emit()))
 	if simulation.area.placeholder:
 		var banner: Label = Label.new()
-		banner.position = Vector2(640, 46)
 		banner.text = "FICTIONAL TEST STREET: not a real place"
 		banner.add_theme_font_size_override("font_size", 13)
 		banner.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
-		add_child(banner)
+		bar.add_child(banner)
 	_message_label = Label.new()
 	_message_label.position = Vector2(20, 48)
-	_message_label.text = "Click one of your household (blue), then a house to send them there, or a neighbor to talk."
+	_message_label.text = "Click one of your household (blue), then a house or a neighbor. Right-click a building to see what is known about it."
 	_message_label.add_theme_font_size_override("font_size", 13)
 	add_child(_message_label)
 

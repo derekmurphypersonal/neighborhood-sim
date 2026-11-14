@@ -6,6 +6,7 @@ extends Node2D
 signal person_clicked(person_id: String)
 signal building_clicked(building_id: String)
 signal room_clicked(room_id: String)
+signal building_info_requested(building_id: String)
 
 const Simulation := preload("res://sim/simulation.gd")
 const Area := preload("res://sim/world/area.gd")
@@ -538,6 +539,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):
 		return
 	var click: InputEventMouseButton = event
+	if click.pressed and click.button_index == MOUSE_BUTTON_RIGHT:
+		var looked_at: String = _building_at(click.position)
+		if looked_at != "":
+			building_info_requested.emit(looked_at)
+		return
 	if not click.pressed or click.button_index != MOUSE_BUTTON_LEFT:
 		return
 	var rects: Dictionary = _room_rects()
@@ -557,10 +563,17 @@ func _unhandled_input(event: InputEvent) -> void:
 	if best_id != "":
 		person_clicked.emit(best_id)
 		return
+	var clicked: String = _building_at(click.position)
+	if clicked != "":
+		building_clicked.emit(clicked)
+
+
+## The building drawn at a point on the screen ("" if none).
+func _building_at(point: Vector2) -> String:
 	for building_id: String in area.sorted_building_ids():
 		var building: Dictionary = area.buildings[building_id]
 		var height: float = float(building["stories"]) * STORY_HEIGHT_INCHES * _scale
-		if Geometry2D.is_point_in_polygon(click.position, _polygon(building["footprint"], height)) \
-				or Geometry2D.is_point_in_polygon(click.position, _polygon(building["footprint"])):
-			building_clicked.emit(building_id)
-			return
+		if Geometry2D.is_point_in_polygon(point, _polygon(building["footprint"], height)) \
+				or Geometry2D.is_point_in_polygon(point, _polygon(building["footprint"])):
+			return building_id
+	return ""
