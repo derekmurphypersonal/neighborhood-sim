@@ -8,6 +8,7 @@ signal order_given(person_id: String, order: Dictionary)
 signal music_toggled(on: bool)
 signal sound_toggled(on: bool)
 signal week_requested
+signal menu_requested
 signal sheet_closed
 
 const Simulation := preload("res://sim/simulation.gd")
@@ -79,6 +80,7 @@ func _build_top_bar() -> void:
 	_sound_button = _toggle("Chimes", func(on: bool) -> void: sound_toggled.emit(on))
 	bar.add_child(_sound_button)
 	bar.add_child(_button("This week", func() -> void: week_requested.emit()))
+	bar.add_child(_button("Menu", func() -> void: menu_requested.emit()))
 	if simulation.area.placeholder:
 		var banner: Label = Label.new()
 		banner.text = "FICTIONAL TEST STREET: not a real place"

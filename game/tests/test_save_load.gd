@@ -176,3 +176,143 @@ func test_file_problems_are_reported_not_fatal() -> void:
 	var missing: Dictionary = SaveGame.read_file(impossible)
 	check(not missing["ok"] and missing["error"] != "", "a save that cannot be read reports why")
 	DirAccess.remove_absolute(blocker)
+
+
+# --- Every state field (M1-B step 10) ----------------------------------------
+
+const Records := preload("res://sim/state/records.gd")
+const Economy := preload("res://sim/systems/economy.gd")
+
+
+## Runs until something is true, at most a week. Returns whether it happened.
+func _run_until(simulation: Simulation, condition: Callable) -> bool:
+	for minute: int in 7 * SimDate.MINUTES_PER_DAY:
+		if condition.call():
+			return true
+		simulation.tick()
+	return false
+
+
+func _anyone(simulation: Simulation, test: Callable) -> bool:
+	for person_id: String in simulation.state.sorted_person_ids():
+		if test.call(simulation.state.people[person_id]):
+			return true
+	return false
+
+
+## Saves, reloads, and checks the copy is the same now and stays the same.
+func _check_exact(simulation: Simulation, moment: String) -> void:
+	var reloaded: Simulation = _reload(simulation)
+	check_eq(SaveGame.to_text(reloaded), SaveGame.to_text(simulation), "%s: the reloaded game saves to the same text" % moment)
+	simulation.advance_minutes(3 * SimDate.MINUTES_PER_DAY)
+	reloaded.advance_minutes(3 * SimDate.MINUTES_PER_DAY)
+	check_eq(reloaded.state_hash(), simulation.state_hash(), "%s: three days later the two are still identical" % moment)
+
+
+func test_every_record_field_is_in_the_save() -> void:
+	var simulation: Simulation = _new()
+	simulation.advance_minutes(600)
+	var saved: Dictionary = SaveGame.parse(SaveGame.to_text(simulation))["document"]["simulation"]["state"]
+	var person_fields: Array = Records.new_person("x", "x", "x", 0, "x").keys()
+	var household_fields: Array = Records.new_household("x", "x", "x").keys()
+	var relationship_fields: Array = Records.new_relationship("a", "b").keys()
+	var action_fields: Array = Records.new_action("x", "x", "x", "x").keys()
+	check(person_fields.has("daily_wage_cents") and person_fields.has("worked_minutes_today") and person_fields.has("spot"), "the person record has the M1-B fields")
+	check(household_fields.has("pantry_meals") and household_fields.has("rent_owed_cents") and household_fields.has("wages_due_cents"), "the household record has the M1-B fields")
+	check(Records.NEED_NAMES.has("fun"), "fun is a need")
+	for person_id: String in saved["people"]:
+		for field: String in person_fields:
+			check(saved["people"][person_id].has(field), "saved person %s has %s" % [person_id, field])
+		for need: String in Records.NEED_NAMES:
+			check(saved["people"][person_id]["needs"].has(need), "saved person %s has the need %s" % [person_id, need])
+		var action: Dictionary = saved["people"][person_id]["action"]
+		for field: String in action_fields:
+			check(action.is_empty() or action.has(field), "saved action of %s has %s" % [person_id, field])
+	for household_id: String in saved["households"]:
+		for field: String in household_fields:
+			check(saved["households"][household_id].has(field), "saved household %s has %s" % [household_id, field])
+	for key: String in saved["relationships"]:
+		for field: String in relationship_fields:
+			check(saved["relationships"][key].has(field), "saved relationship %s has %s" % [key, field])
+	check(saved.has("last_abstract_day"), "the last abstract day is saved")
+
+
+func test_new_field_values_come_back_exactly() -> void:
+	var simulation: Simulation = _new()
+	simulation.advance_minutes(300)
+	var household: Dictionary = simulation.state.households["fx_hh_1"]
+	household["rent_owed_cents"] = 321
+	household["wages_due_cents"] = 2200
+	household["pantry_meals"] = 5
+	household["last_empty_pantry_day"] = simulation.clock.day_index
+	simulation.state.people["fx_p_02"]["worked_minutes_today"] = 123
+	simulation.state.people["fx_p_01"]["needs"]["fun"] = 12345
+	simulation.state.people["fx_p_01"]["last_set_meal_day"] = simulation.clock.day_index
+	simulation.state.last_abstract_day = simulation.clock.day_index - 1
+	var reloaded: Simulation = _reload(simulation)
+	var copy: Dictionary = reloaded.state.households["fx_hh_1"]
+	for field: String in ["rent_owed_cents", "wages_due_cents", "pantry_meals", "last_empty_pantry_day", "funds_cents", "weekly_rent_cents", "other_weekly_income_cents"]:
+		check_eq(copy[field], household[field], "household %s comes back" % field)
+	check_eq(reloaded.state.people["fx_p_02"]["worked_minutes_today"], 123, "minutes worked today come back")
+	check_eq(reloaded.state.people["fx_p_02"]["daily_wage_cents"], simulation.state.people["fx_p_02"]["daily_wage_cents"], "the wage comes back")
+	check_eq(reloaded.state.people["fx_p_11"]["workplace_id"], "fx_bd_6", "the workplace comes back")
+	check_eq(reloaded.state.people["fx_p_01"]["needs"]["fun"], 12345, "fun comes back")
+	check_eq(reloaded.state.people["fx_p_01"]["last_set_meal_day"], simulation.clock.day_index, "the day of the last set meal comes back")
+	check_eq(reloaded.state.last_abstract_day, simulation.clock.day_index - 1, "the last abstract day comes back")
+	check_eq(reloaded.state_hash(), simulation.state_hash(), "and the whole state is identical")
+
+
+func test_saving_in_the_middle_of_a_shopping_trip() -> void:
+	var simulation: Simulation = _new()
+	var found: bool = _run_until(simulation, func() -> bool: return _anyone(simulation, func(person: Dictionary) -> bool:
+		return not person["action"].is_empty() and person["action"]["kind"] == "shop" and person["action"]["started"]))
+	check(found, "someone goes shopping within the week")
+	_check_exact(simulation, "mid-shopping")
+
+
+func test_saving_while_a_talk_holds_up_something_else() -> void:
+	var simulation: Simulation = _new()
+	var found: bool = _run_until(simulation, func() -> bool: return _anyone(simulation, func(person: Dictionary) -> bool:
+		return not person["action"].is_empty() and person["action"]["kind"] == "talk" and not (person["action"]["resume"] as Dictionary).is_empty()))
+	check(found, "a talk interrupts something to be taken up again within the week")
+	_check_exact(simulation, "mid-talk with something to resume")
+
+
+func test_saving_with_someone_in_a_room_and_someone_in_the_store() -> void:
+	var simulation: Simulation = _new()
+	var found: bool = _run_until(simulation, func() -> bool:
+		return _anyone(simulation, func(person: Dictionary) -> bool: return person["spot"] != "") \
+			and _anyone(simulation, func(person: Dictionary) -> bool: return person["at"] == Records.AT_INSIDE and person["place_id"] == "fx_bd_6" and person["action"].get("kind", "") != "work"))
+	check(found, "someone is in a room of the home while a visitor is in the store")
+	_check_exact(simulation, "in a room and in the store")
+
+
+func test_saving_with_wages_earned_and_rent_owed() -> void:
+	var simulation: Simulation = _new()
+	simulation.state.households["fx_hh_1"]["funds_cents"] = 0
+	simulation.state.households["fx_hh_1"]["weekly_rent_cents"] = 100000  # more than a week's wages: Monday's rent cannot be met
+	simulation.state.households["fx_hh_1"]["pantry_meals"] = 0
+	var found: bool = _run_until(simulation, func() -> bool:
+		var household: Dictionary = simulation.state.households["fx_hh_1"]
+		return household["rent_owed_cents"] > 0 and household["wages_due_cents"] > 0)
+	check(found, "the household owes rent and has wages coming")
+	check(simulation.state.households["fx_hh_1"]["last_empty_pantry_day"] >= 0, "and has had an empty pantry")
+	_check_exact(simulation, "rent owed and wages earned")
+
+
+func test_saving_after_abstract_days() -> void:
+	var simulation: Simulation = _new()
+	simulation.advance_minutes(SimDate.MINUTES_PER_DAY - simulation.clock.minute_of_day)
+	simulation.advance_to_day_abstract(simulation.clock.day_index + 3)
+	check_eq(simulation.state.last_abstract_day, simulation.clock.day_index - 1, "yesterday was run abstractly")
+	_check_exact(simulation, "the morning after abstract days")
+
+
+func test_a_week_with_a_save_in_the_middle_matches_a_week_straight_through() -> void:
+	var straight: Simulation = _new()
+	straight.advance_minutes(7 * SimDate.MINUTES_PER_DAY)
+	var stopped: Simulation = _new()
+	stopped.advance_minutes(3 * SimDate.MINUTES_PER_DAY + 257)
+	stopped = _reload(stopped)
+	stopped.advance_minutes(7 * SimDate.MINUTES_PER_DAY - (3 * SimDate.MINUTES_PER_DAY + 257))
+	check_eq(stopped.state_hash(), straight.state_hash(), "a full week, with wages, rent and shopping, is identical either way")

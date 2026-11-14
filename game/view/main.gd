@@ -14,6 +14,8 @@ const WorldView := preload("res://view/world_view.gd")
 const Hud := preload("res://view/hud.gd")
 const Describe := preload("res://view/describe.gd")
 const BuildingInfo := preload("res://sim/reports/building_info.gd")
+const SaveGame := preload("res://sim/io/save_game.gd")
+const SimDate := preload("res://sim/clock/sim_date.gd")
 const WeekSummary := preload("res://sim/reports/week_summary.gd")
 
 const SCENARIO: String = "fixture_street_spring_1950"
@@ -27,7 +29,11 @@ const CHIME_GAP_MS: int = 450
 ## Indoor activities not worth a note over the house.
 const QUIET_INDOORS: Array[String] = ["At home", "Deciding what to do", "Heading home"]
 
+## The one saved game. Where saves belong in an exported build is still an
+## open question (Q-016); for now it is the per-user data folder.
+var save_path: String = "user://saved_game.json"
 var simulation: Simulation
+var _layer: CanvasLayer
 var world_view: WorldView
 var hud: Hud
 var speed_index: int = 1
@@ -61,31 +67,9 @@ func _ready() -> void:
 		add_child(message)
 		set_process(false)
 		return
-	simulation = Simulation.new_game(world, int(world["scenario"].get("default_seed", 1)))
-	var player_household: Dictionary = simulation.state.households[simulation.state.player_household_id()]
-	selected_id = player_household["member_ids"][0]
-
-	world_view = WorldView.new()
-	world_view.setup(simulation)
-	world_view.person_clicked.connect(_on_person_clicked)
-	world_view.building_clicked.connect(_on_building_clicked)
-	world_view.room_clicked.connect(_on_room_clicked)
-	world_view.building_info_requested.connect(_show_building)
-	add_child(world_view)
-
-	var layer: CanvasLayer = CanvasLayer.new()
-	add_child(layer)
-	hud = Hud.new()
-	hud.setup(simulation)
-	hud.speed_chosen.connect(func(index: int) -> void: speed_index = index)
-	hud.person_chosen.connect(_select)
-	hud.order_given.connect(_give_order)
-	hud.music_toggled.connect(_set_music)
-	hud.sound_toggled.connect(func(on: bool) -> void: sound_on = on)
-	hud.week_requested.connect(func() -> void: _show_week(_week_start, "This week so far"))
-	hud.sheet_closed.connect(_on_sheet_closed)
-	_week_start = WeekSummary.week_start(simulation.clock.day_index)
-	layer.add_child(hud)
+	_layer = CanvasLayer.new()
+	add_child(_layer)
+	_show_simulation(Simulation.new_game(world, int(world["scenario"].get("default_seed", 1))))
 
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	for i: int in args.size() - 1:
@@ -96,7 +80,6 @@ func _ready() -> void:
 		if args[i] == "--minutes" and args[i + 1].is_valid_int():
 			_screenshot_minutes = args[i + 1].to_int()
 
-	_watch(false)
 	if _screenshot_path != "":
 		_take_screenshot()
 		return
@@ -139,6 +122,103 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				speed_index = 3
 			KEY_M:
 				_set_music(not music_on)
+			KEY_ESCAPE:
+				if hud.sheet_is_open():
+					hud.close_sheet()
+				else:
+					_show_menu()
+
+
+## Puts a simulation on screen: a new game, or one loaded from a save.
+## Anything shown for an earlier simulation is removed first.
+func _show_simulation(shown: Simulation) -> void:
+	if world_view != null:
+		world_view.queue_free()
+		hud.queue_free()
+	simulation = shown
+	selected_id = simulation.state.households[simulation.state.player_household_id()]["member_ids"][0]
+	_pending_minutes = 0.0
+	_speed_before_sheet = -1
+	_last_activity.clear()
+	_last_at.clear()
+	_last_funds.clear()
+	_seen_events = 0
+	_week_start = WeekSummary.week_start(simulation.clock.day_index)
+
+	world_view = WorldView.new()
+	world_view.setup(simulation)
+	world_view.person_clicked.connect(_on_person_clicked)
+	world_view.building_clicked.connect(_on_building_clicked)
+	world_view.room_clicked.connect(_on_room_clicked)
+	world_view.building_info_requested.connect(_show_building)
+	add_child(world_view)
+
+	hud = Hud.new()
+	hud.setup(simulation)
+	hud.speed_chosen.connect(func(index: int) -> void: speed_index = index)
+	hud.person_chosen.connect(_select)
+	hud.order_given.connect(_give_order)
+	hud.music_toggled.connect(_set_music)
+	hud.sound_toggled.connect(func(on: bool) -> void: sound_on = on)
+	hud.week_requested.connect(func() -> void: _show_week(_week_start, "This week so far"))
+	hud.menu_requested.connect(_show_menu)
+	hud.sheet_closed.connect(_on_sheet_closed)
+	_layer.add_child(hud)
+	_watch(false)
+
+
+# --- The menu: saving and loading --------------------------------------------
+
+func _show_menu(note: String = "") -> void:
+	var lines: Array[String] = [
+		"The game is paused.", "",
+		"[b]Save game[/b] keeps the game exactly as it is now, in one saved game that is replaced each time.",
+		"[b]Load game[/b] goes back to the saved game. Anything since then is lost.", "",
+	]
+	var saved: Dictionary = SaveGame.read_file(save_path)
+	if saved["ok"]:
+		var parsed: Dictionary = SaveGame.parse(saved["text"])
+		if parsed["ok"]:
+			var clock: Dictionary = parsed["document"]["simulation"]["clock"]
+			lines.append("Saved game: %s %s, %s." % [
+				SimDate.weekday_name(clock["day_index"]), SimDate.to_iso(clock["day_index"]), Describe.clock_time(clock["minute_of_day"]),
+			])
+		else:
+			lines.append("The saved game cannot be read: %s" % parsed["error"])
+	else:
+		lines.append("There is no saved game yet.")
+	if note != "":
+		lines.append("")
+		lines.append("[color=#ffeb8c]%s[/color]" % note)
+	_open_sheet("Menu", "\n".join(lines), [["Save game", _save_game], ["Load game", _load_game]], "Resume")
+
+
+## Saves the game. Returns "" or the reason it could not be saved.
+func _save_game() -> String:
+	var problem: String = SaveGame.write_file(save_path, SaveGame.to_text(simulation))
+	_show_menu("Game saved." if problem == "" else "The game could not be saved: %s" % problem)
+	return problem
+
+
+## Loads the saved game. Returns "" or the reason it could not be loaded;
+## on failure the game in progress carries on untouched.
+func _load_game() -> String:
+	var saved: Dictionary = SaveGame.read_file(save_path)
+	if not saved["ok"]:
+		_show_menu("There is no saved game to load.")
+		return saved["error"]
+	var world: Dictionary = WorldLoader.load_world(SCENARIO)
+	var restored: Dictionary = SaveGame.restore(saved["text"], world)
+	if not restored["ok"]:
+		_show_menu("The saved game could not be loaded: %s" % restored["error"])
+		return restored["error"]
+	_show_simulation(restored["simulation"])
+	speed_index = 0
+	var note: String = "Game loaded."
+	if not (restored["changed_data"] as Array).is_empty():
+		note += " The game's data files have changed since it was saved, so it may not play out as it would have."
+	_show_menu(note)
+	return ""
 
 
 # --- Sheets ------------------------------------------------------------------
@@ -381,6 +461,23 @@ func _self_check() -> void:
 	if not hud.sheet_is_open():
 		problems.append("the week summary did not open")
 	hud.close_sheet()
+	# Save and load through the menu's own path, into a scratch folder.
+	save_path = OS.get_temp_dir().path_join("neighborhood_selfcheck_%d" % OS.get_process_id()).path_join("saved_game.json")
+	var saved_hash: String = simulation.state_hash()
+	var save_problem: String = _save_game()
+	if save_problem != "":
+		problems.append("saving from the menu failed: " + save_problem)
+	simulation.advance_minutes(120)
+	var load_problem: String = _load_game()
+	if load_problem != "":
+		problems.append("loading from the menu failed: " + load_problem)
+	elif simulation.state_hash() != saved_hash:
+		problems.append("the loaded game is not the game that was saved")
+	else:
+		print("SELF-CHECK  saved and loaded through the menu; the state is identical")
+	hud.close_sheet()
+	DirAccess.remove_absolute(save_path)
+	DirAccess.remove_absolute(save_path.get_base_dir())
 	if _last_activity.size() != simulation.state.people.size():  # one per resident
 		problems.append("not everyone has an activity bubble")
 	for problem: String in problems:
@@ -396,6 +493,8 @@ func _show_for_screenshot() -> void:
 			_show_building(simulation.area.sorted_building_ids()[0])
 		"store":
 			_show_building(simulation.area.institution_of_kind("store"))
+		"menu":
+			_show_menu()
 		"week":
 			_show_week(WeekSummary.week_start(simulation.clock.day_index - 1), "The week that was")
 
