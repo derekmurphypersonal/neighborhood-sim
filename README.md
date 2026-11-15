@@ -15,7 +15,7 @@ An original historical neighborhood life-simulation game set in the Linden neigh
 | How the world is represented as data | [docs/WORLD_DATA_MODEL.md](docs/WORLD_DATA_MODEL.md) |
 | How 1950–1959 passes and how people and places change | [docs/TIME_AND_LIFECYCLE.md](docs/TIME_AND_LIFECYCLE.md) |
 | Engine choice and code structure | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| What has been built and what comes next | [docs/ROADMAP.md](docs/ROADMAP.md), [docs/M1_PLAN.md](docs/M1_PLAN.md) |
+| What has been built and what comes next | [docs/ROADMAP.md](docs/ROADMAP.md), [docs/M1_PLAN.md](docs/M1_PLAN.md), [docs/M1_PLAYTEST.md](docs/M1_PLAYTEST.md) |
 | What is in progress right now | [docs/HANDOFF.md](docs/HANDOFF.md) |
 | Rules for AI assistants working in this repo | [CLAUDE.md](CLAUDE.md) |
 

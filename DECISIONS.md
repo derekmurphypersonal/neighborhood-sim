@@ -9,7 +9,7 @@ Rules for this file:
 - A proposal becomes confirmed only when Derek says so. It then gets a new D-number; the proposal row stays, pointing to it.
 - Each entry has an ID, a date and a source. Longer reasoning lives in the linked doc.
 
-Last updated: 2026-11-13 (M1-B authorized and in progress)
+Last updated: 2026-11-15 (M1-B steps 1 to 10 built; step 11 awaits Derek)
 
 ## Confirmed
 
@@ -136,7 +136,7 @@ Kept so that older references resolve.
 | ID | Question | Direction so far | Resolve when |
 |---|---|---|---|
 | Q-002 | **What are the boundaries of "Linden" for this game?** | Requires historical research: a sourced definition, or an explicit statement that the boundary is a design choice. One period definition to weigh: the streets the Sanborn index marks "at Linden" (finding F-051). | Before the map widens (M4) |
-| Q-004 | **How long should a full playthrough be?** | Determine through playtesting. Under continuous time (D-013) this depends on speed settings and how players use fast-forward. | From M1 playtests onward |
+| Q-004 | **How long should a full playthrough be?** | Determine through playtesting. Under continuous time (D-013) this depends on speed settings and how players use fast-forward. First pacing observations of the M1-B week, from unattended runs and screenshots rather than a person playing, and the pacing questions they raise, are in [M1_PLAYTEST.md](docs/M1_PLAYTEST.md). | From M1 playtests onward |
 | Q-006 | **How are the social realities of the 1950s represented?** | Research before implementing resident-generation rules. Do not model by assumption. | Before resident generation uses real patterns |
 | Q-007 | **Household switching.** | Deferred until after the first playable (D-014). | After M1 |
 | Q-008 | **Final art direction.** | Deferred. M1 uses plain placeholder art. | After M1 |
@@ -176,3 +176,4 @@ Kept so that older references resolve.
 | 2026-11-13 | M1-A stabilized: save-file test fixed and the save contract made explicit (P-015 proposed). M1-B scope and order recorded as D-045; M1-B is not authorized. Stale test counts, hashes and status wording reconciled across documents; obsolete sections of `docs/M1_PLAN.md` labelled. Note: D-042 was recorded from Derek's message "p-014 is fine"; a later instruction asked for P-014 to stay proposed if unconfirmed, so this entry flags it for Derek to confirm that D-042 stands. |
 | 2026-11-13 | Derek ran the checks on the Mac: all pass, hashes identical to Linux. D-042 confirmed to stand; P-015 confirmed as D-047; M1-B authorized (D-046). |
 | 2026-11-15 | M1-B steps 1 to 10 implemented on the fictional fixture and committed one step at a time. Lasting choices made on the way are recorded as proposals P-016 to P-022, not as decisions. Step 11 (week playtest write-up and the M1 judgment) and the documentation reconciliation are outstanding; see `docs/HANDOFF.md`. |
+| 2026-11-15 | No new decisions. Documents reconciled with what M1-B built. Pacing observations from unattended runs written up in `docs/M1_PLAYTEST.md` and linked from Q-004; the M1 judgment there is left for Derek. P-016 to P-022 still await him. |

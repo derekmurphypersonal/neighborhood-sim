@@ -115,7 +115,7 @@ Scope and order as set by Derek (D-045). Implement only this, in this order, ent
 8. Add the end-of-week summary generated from the event log.
 9. Add the building information view, keeping documented exterior facts separate from fictional interiors and fixture content.
 10. Add menu save and load, and extend the exact-save tests for every new state field.
-11. Playtest the full week and record pacing observations and the final M1 judgment.
+11. Playtest the full week and record pacing observations and the final M1 judgment. (Observations from unattended runs are in [M1_PLAYTEST.md](M1_PLAYTEST.md); the playtest by a person and the judgment are Derek's.)
 
 Maynard Street is not part of M1-B. It remains `probable`, unconfirmed research (finding F-058) and is not entered as historical data until confirmed (D-037). Nothing from M2 is to be added.
 
@@ -160,7 +160,7 @@ The list below is unchanged. Where each item stands on 2026-11-15, after M1-B st
 | 4. Choices produce visibly different weeks | Met in automated tests (an ordered conversation happens and the state differs from an undirected run). Whether the difference is visible to a player is for Derek to judge. |
 | 5. Save, quit, load and continue | Met in automated tests and in the self-check's save and load through the menu. |
 | 6. Automated tests pass | Met: 105 tests, 2014 checks, 0 failed. |
-| 7. Derek's judgment and pacing observations | Outstanding. |
+| 7. Derek's judgment and pacing observations | Pacing observations from unattended runs and screenshots, not from a person playing, are in [M1_PLAYTEST.md](M1_PLAYTEST.md), linked from Q-004. Derek's judgment is outstanding. |
 
 ### Research still needed for Maynard Street
 

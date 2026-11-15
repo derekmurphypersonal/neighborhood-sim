@@ -100,7 +100,7 @@ Each step ends with tests passing and, from step 5 on, something visible. Nothin
 8. Add the end-of-week summary generated from the event log.
 9. Add the building information view, keeping documented exterior facts separate from fictional interiors and fixture content.
 10. Add menu save and load, and extend the exact-save tests for every new state field.
-11. Playtest the full week and record pacing observations and the final M1 judgment.
+11. Playtest the full week and record pacing observations and the final M1 judgment. Observations from unattended runs: [M1_PLAYTEST.md](M1_PLAYTEST.md).
 
 ## 5. Replacing Fixture Street with a Linden block
 
