@@ -97,7 +97,17 @@ Last updated: 2026-11-13 (M1-B authorized and in progress)
 
 ## Proposals
 
-There are no open proposals.
+These were implemented during M1-B (authorized scope, D-045) and are recorded here as proposals. None is a confirmed decision until Derek confirms it.
+
+| ID | Proposal | Status |
+|---|---|---|
+| P-016 | **Timetables by kind of day.** A schedule has three day plans, `weekday`, `saturday` and `sunday`, each with waking and bed times, an optional away period (work or school) and optional fixed household mealtimes. | Implemented in M1-B step 2; awaiting Derek |
+| P-017 | **Institutions are area data; interiors are fiction assigned by the scenario.** An institution record names a building, a kind and opening hours per kind of day. A floor plan lives in `data/fiction/interiors/` and a scenario assigns it to a building of a matching type. Actions name a kind of room, not a particular room. | Implemented in steps 3 to 5; awaiting Derek |
+| P-018 | **A conversation holds up what it interrupts.** Being inside an institution, working there, shopping, or waiting where the player sent you is taken up again after a talk, with its end moved back by the length of the talk. | Implemented in step 3; awaiting Derek |
+| P-019 | **Household money follows behavior.** Wages are earned per day actually worked (enough minutes at work) and paid on Friday; rent is due on Monday and any shortfall is carried forward; meals come out of a pantry that an adult restocks at the store; with an empty pantry meals are thin. Money never goes below zero. Every wage, rent and price is invented (scenario data and `gameplay_tuned` tuning) and is never presented as historical. | Implemented in step 7; awaiting Derek |
+| P-020 | **Detail levels agree exactly only on what the calendar drives.** With money following behavior, the day-by-day level reckons wages and groceries from timetables, so it agrees with minute-by-minute play only roughly (tested to within a quarter of four weeks' income). Birthdays, paydays and rent days still fall identically. This replaces the M1-A test that required identical household money at both levels. | Implemented in step 7; awaiting Derek |
+| P-021 | **Reports are read-only code in `game/sim/reports/`.** The week summary is computed from the event log alone (plus household membership); building information returns documented exterior, fictional interior, institution and fictional households as separate parts. Neither changes state. | Implemented in steps 8 and 9; awaiting Derek |
+| P-022 | **One saved game, in the per-user data folder, for now.** The menu saves to and loads from a single file, `user://saved_game.json`. Where saves belong in an exported build remains open (Q-016). | Implemented in step 10; awaiting Derek |
 
 ### Closed proposals
 
@@ -165,3 +175,4 @@ Kept so that older references resolve.
 | 2026-11-13 | Derek accepted the M1-A additions (D-044), confirmed P-014 as D-042, and resolved Q-018 as D-043. M1-B awaits his next steps and is not authorized. |
 | 2026-11-13 | M1-A stabilized: save-file test fixed and the save contract made explicit (P-015 proposed). M1-B scope and order recorded as D-045; M1-B is not authorized. Stale test counts, hashes and status wording reconciled across documents; obsolete sections of `docs/M1_PLAN.md` labelled. Note: D-042 was recorded from Derek's message "p-014 is fine"; a later instruction asked for P-014 to stay proposed if unconfirmed, so this entry flags it for Derek to confirm that D-042 stands. |
 | 2026-11-13 | Derek ran the checks on the Mac: all pass, hashes identical to Linux. D-042 confirmed to stand; P-015 confirmed as D-047; M1-B authorized (D-046). |
+| 2026-11-15 | M1-B steps 1 to 10 implemented on the fictional fixture and committed one step at a time. Lasting choices made on the way are recorded as proposals P-016 to P-022, not as decisions. Step 11 (week playtest write-up and the M1 judgment) and the documentation reconciliation are outstanding; see `docs/HANDOFF.md`. |
