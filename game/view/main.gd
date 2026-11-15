@@ -45,6 +45,7 @@ var _pending_minutes: float = 0.0
 var _screenshot_path: String = ""
 var _screenshot_minutes: int = 0
 var _screenshot_sheet: String = ""
+var _screenshot_zoom: float = 1.0
 var _music: AudioStreamPlayer
 var _chime_talk: AudioStreamPlayer
 var _chime_notice: AudioStreamPlayer
@@ -77,6 +78,8 @@ func _ready() -> void:
 			_screenshot_path = args[i + 1]
 		if args[i] == "--show":
 			_screenshot_sheet = args[i + 1]
+		if args[i] == "--zoom" and args[i + 1].is_valid_float():
+			_screenshot_zoom = args[i + 1].to_float()
 		if args[i] == "--minutes" and args[i + 1].is_valid_int():
 			_screenshot_minutes = args[i + 1].to_int()
 
@@ -510,6 +513,7 @@ func _take_screenshot() -> void:
 		_watch(true)
 	world_view.minute_fraction = 1.0
 	world_view.selected_id = selected_id
+	world_view.set_zoom(_screenshot_zoom)
 	world_view.queue_redraw()
 	hud.refresh(selected_id, speed_index, music_on, sound_on)
 	_show_for_screenshot()
