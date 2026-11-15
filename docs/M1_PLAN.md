@@ -1,6 +1,6 @@
 # M1 Implementation Plan (proposal)
 
-Status: updated 2026-11-13. **This is the plan Derek approved for M1. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B is authorized (D-046) and in progress.** Current status and the authoritative M1-B scope are in [ROADMAP.md](ROADMAP.md). Sections 6 to 9 below were written before M1-A was built; each now carries a note saying what is obsolete. One departure from this plan: step 3 kept records as plain dictionaries under a no-fractions rule instead of typed classes (confirmed as D-042).
+Status: updated 2026-11-15. **This is the plan Derek approved for M1. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B is authorized (D-046); steps 1 to 10 are built on Fixture Street, and step 11 is outstanding.** Current status and the authoritative M1-B scope are in [ROADMAP.md](ROADMAP.md). Sections 6 to 9 below were written before M1-A was built; each now carries a note saying what is obsolete. One departure from this plan: step 3 kept records as plain dictionaries under a no-fractions rule instead of typed classes (confirmed as D-042).
 
 The M1 milestone and its outcome are unchanged (D-021, [ROADMAP.md](ROADMAP.md)): one week on one block, with one player household among autonomous neighbors, that is enjoyable to watch and direct. This plan only splits the work in two.
 
@@ -67,7 +67,7 @@ What depends on what, and why it matters for order:
 - **Schedules come before needs.** A need is acted on in the time a schedule leaves free, and an obligation overrides a need.
 - **Movement comes before social interaction.** Two residents can only talk when they are in the same place.
 - **Relationships depend on interactions and on the event log,** since a relationship's history is references to logged events.
-- **Finances depend on schedules** (wages for days worked) **and on actions** (shopping). The weekly lump-sum budget from M0 is enough for M1-A and is replaced in M1-B.
+- **Finances depend on schedules** (wages for days worked) **and on actions** (shopping). The weekly lump-sum budget from M0 is enough for M1-A and is replaced in M1-B. (Done in M1-B step 7: the lump sum is gone; see P-019 and P-020.)
 - **Places and the scenario come before everything that happens somewhere.** Settling their data shape first is also what makes the Fixture-to-Linden swap cheap (§5).
 - **The view depends only on places, positions and the event feed.** It should arrive early, as soon as something moves, because watching is how most M1 problems will be found.
 
@@ -88,7 +88,7 @@ Each step ends with tests passing and, from step 5 on, something visible. Nothin
 9. **Player commands.** Select, send, talk. Commands are timestamped inputs, recorded so runs can be replayed.
 10. **Feed and panels.** Event feed, household panel, relationship panel. M1-A review with Derek.
 
-**M1-B** (as set by Derek, D-045; authorized, D-046)
+**M1-B** (as set by Derek, D-045; authorized, D-046; steps 1 to 10 done, each in its own commit; what they built is listed in [ROADMAP.md](ROADMAP.md))
 
 1. Expand the fictional fixture scenario to four to six households and fifteen to twenty-five residents.
 2. Add seven-day schedules with clear weekday, Saturday and Sunday behavior.

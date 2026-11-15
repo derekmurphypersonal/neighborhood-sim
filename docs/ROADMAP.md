@@ -1,6 +1,6 @@
 # Roadmap and First Playable Milestone
 
-Status: updated 2026-11-13. **M0 is reviewed and accepted. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B is authorized (D-046) and in progress.** See [DECISIONS.md](../DECISIONS.md).
+Status: updated 2026-11-15. **M0 is reviewed and accepted. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B is authorized (D-046); steps 1 to 10 are built on Fixture Street, and step 11 (a week played by Derek and his M1 judgment) is outstanding.** See [DECISIONS.md](../DECISIONS.md).
 
 Milestones are defined by what a player can do at the end of each, not by which systems exist.
 
@@ -10,7 +10,7 @@ Milestones are defined by what a player can do at the end of each, not by which 
 |---|---|---|---|
 | Pre-production | Documentation and review | — read a documented, reviewed design and plan | Done |
 | **M0** | Groundwork | — nothing yet; a decade runs headless on a fixture, and candidate blocks in the real Linden are identified | Done; no historical data entered yet |
-| **M1** | **A Week on the Block** | live one week of spring 1950 with one household on one block, with pause and speed controls | M1-A accepted; M1-B not started |
+| **M1** | **A Week on the Block** | live one week of spring 1950 with one household on one block, with pause and speed controls | M1-A accepted; M1-B steps 1–10 built, step 11 awaits Derek |
 | M2 | A Year on the Block | play through 1950 continuously, fast-forwarding at will, with birthdays, life events and summaries of skipped time | |
 | M3 | The Decade on the Block | play 1950–1959 on that block, with documented changes arriving on their dates | |
 | M4+ | Widening Linden | play on a growing map, block by researched block | |
@@ -39,7 +39,7 @@ Milestones are defined by what a player can do at the end of each, not by which 
 - A fictional fixture world ("Fixture Street": twelve residents in four households) loaded from data.
 - Day-by-day (abstract level) simulation of two things only: birthdays, and a simple weekly household budget with seeded variation. Events are written to a life-event log.
 - A data validator enforcing the provenance and layer rules, including that the fixture is marked fictional and never uses the real place names.
-- 31 automated tests at the end of M0 (59 now).
+- 31 automated tests at the end of M0 (105 now).
 
 It deliberately does **not** include: needs, schedules, movement, conversations, relationships, jobs, interiors, any drawing of a map, player control, saves, or the close and routine detail levels. Those are M1 and M2.
 
@@ -101,7 +101,7 @@ Not in M1-A, by design: interiors, an enterable building, wages tied to days wor
 
 Done: Derek reviewed the stabilization, ran the checks on the Mac, and authorized M1-B on 2026-11-13 (D-046).
 
-### M1-B: the complete first week — authorized (D-046), in progress
+### M1-B: the complete first week — authorized (D-046); steps 1 to 10 built
 
 Scope and order as set by Derek (D-045). Implement only this, in this order, entirely on the fictional fixture:
 
@@ -121,7 +121,28 @@ Maynard Street is not part of M1-B. It remains `probable`, unconfirmed research 
 
 For every step: tests first when fixing a bug; the core stays independent of scenes, rendering, input and wall-clock time; seeded randomness only; no fractional numbers in state; documents updated when a contract changes; `DECISIONS.md` updated for lasting choices; small single-purpose commits; exact commands and actual results reported.
 
+#### What steps 1 to 10 built (2026-11-15)
+
+Each step was committed on its own, on Fixture Street only. The lasting choices made on the way are proposals P-016 to P-022 in `DECISIONS.md`, implemented and awaiting Derek's confirmation.
+
+1. Five households and seventeen residents, all fictional, with names that are plainly invented.
+2. Timetables for weekdays, Saturdays and Sundays: a Saturday shift for one worker, the storekeeper's six-day week, Sunday dinner at 13:00 for every household (P-016).
+3. Rooms, institutions with opening hours, the `enter` and `use_room` orders, conversation inside an institution, and a talk that holds up what it interrupts (P-017, P-018).
+4. A fictional floor plan for the player's home, drawn as a cutaway labelled "FICTIONAL INTERIOR (invented layout)"; clicking a room sends the selected person there.
+5. The Fixture Store: a fictional shop with hours, a storekeeper from the street who works there, and neighbors who drop in.
+6. The `fun` need, with a pastime at home, play outdoors for children, looking around the store, and a little from talking.
+7. Money that follows behavior: wages for days actually worked, paid Friday; rent on Monday with any shortfall carried forward; a pantry restocked at the store; thin meals when it is empty (P-019). Every amount is invented. The abstract level now agrees with minute-by-minute play on money only roughly (P-020).
+8. The end-of-week summary, computed from the event log, opening at each week's end and on request (P-021).
+9. Building information on right-click, keeping documented exterior, fictional interior and fictional scenario content apart (P-021). On Fixture Street nothing is documented, and the sheet says so.
+10. Menu save and load of one saved game in the per-user data folder (P-022), with exact-save tests for every new state field.
+
+Not built, by design: anything from M2, a routine detail level, Maynard Street data.
+
+**Verified on Linux, Godot 4.7.2, on 2026-11-15:** 105 tests, 2014 checks, 0 failed; data validation 0 errors; self-check passed, including a save and load through the menu; three-day, decade and first-week hashes as given in the README. **Not verified:** none of M1-B has been run on Derek's Mac, and nobody has played M1-B by hand.
+
 ### M1 done when (unchanged)
+
+The list below is unchanged. Where each item stands on 2026-11-15, after M1-B step 10, follows it.
 
 1. A new game starts on the block and plays through seven days without errors.
 2. If on real data: every building shown traces to a record with provenance and validation passes. If on the fixture: everything is marked placeholder, the game says the place is fictional, and nothing uses real Linden names.
@@ -130,6 +151,16 @@ For every step: tests first when fixing a bug; the core stays independent of sce
 5. Save, quit, load and continue gives the same result as playing straight through.
 6. Automated tests pass.
 7. Derek plays it and decides whether the loop is worth extending. That judgment, and first observations on pacing (Q-004), are written into `DECISIONS.md`.
+
+| Item | Where it stands |
+|---|---|
+| 1. Seven days without errors | Met in unattended runs: `playtest_week.gd` runs the first seven days minute by minute and exits 0; tests run up to four weeks. The scene itself has been run for a day and a half by the self-check, not for a full week by a person. |
+| 2. Fixture marked fictional | Met: every fixture record is `placeholder`, the banner and the building sheet say the place is fictional, and validation, which forbids the real place names in fixture files, reports 0 errors. |
+| 3. Residents look after themselves and relationships change | Met in the unattended week: no need reached zero; 209 conversations; 52 pairs of neighbors met. |
+| 4. Choices produce visibly different weeks | Met in automated tests (an ordered conversation happens and the state differs from an undirected run). Whether the difference is visible to a player is for Derek to judge. |
+| 5. Save, quit, load and continue | Met in automated tests and in the self-check's save and load through the menu. |
+| 6. Automated tests pass | Met: 105 tests, 2014 checks, 0 failed. |
+| 7. Derek's judgment and pacing observations | Outstanding. |
 
 ### Research still needed for Maynard Street
 

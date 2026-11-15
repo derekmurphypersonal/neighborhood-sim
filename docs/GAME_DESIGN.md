@@ -1,6 +1,6 @@
 # Game Design Document
 
-Working title: **The Neighborhood**. Status: updated 2026-11-13 after the second design review.
+Working title: **The Neighborhood**. Status: updated 2026-11-13 after the second design review; the systems table's "Built so far" column updated 2026-11-15 for M1-B steps 1 to 10.
 
 Items marked *(confirmed)* trace to a confirmed decision in [DECISIONS.md](../DECISIONS.md). Items marked *(proposed)* are recommendations not yet confirmed. Everything else is design intent that will be tested by the prototype.
 
@@ -53,25 +53,26 @@ How time works in detail is in [TIME_AND_LIFECYCLE.md](TIME_AND_LIFECYCLE.md).
 
 ## 5. Simulation systems
 
-Listed in the order they are expected to be built. Each must justify itself by what the player experiences *(confirmed, D-007)*.
+Listed in the order they are expected to be built. Each must justify itself by what the player experiences *(confirmed, D-007)*. The last column says what exists in code, all of it on the fictional Fixture Street; where it rests on a proposal not yet confirmed, the proposal is named.
 
-| System | What the player experiences | First needed |
-|---|---|---|
-| Clock and calendar | Continuous days, weekdays versus Sundays, seasons, years; pause, speeds, fast-forward | M0 (core), M1 (controls) |
-| Needs | Residents get hungry, tired, lonely, bored, and act to fix it | M1 |
-| Schedules | People go to work and school; shops keep hours | M1 |
-| Movement and places | Walking the block, entering buildings | M1 |
-| Social interaction and relationships | Conversations that build or damage ties; people remember | M1 |
-| Household economy | Wages, rent, groceries, running short before payday | M1 (simple) |
-| Personality and goals | Residents differ, and want different lives | M1 (traits), M2 (goals) |
-| Life-event log and summaries | "While you were away" news; residents' memories | M1 (log), M2 (summaries) |
-| Lifecycle | Birthdays, growing up, births, marriage, death, moving | M2 |
-| Detail levels | A neighborhood that carries on out of sight without slowing the game | M2 |
-| Employment | Getting, losing and changing jobs; commuting | M2 |
-| Businesses | Shops with owners, staff, customers and fortunes | M2 |
-| Community events | Recurring traditions and one-off gatherings | M2 |
-| Historical timeline | Documented changes arrive on their dates | M3 |
-| Neighborhood memory | Reputation, gossip, shared history | M4 |
+| System | What the player experiences | First needed | Built so far |
+|---|---|---|---|
+| Clock and calendar | Continuous days, weekdays versus Sundays, seasons, years; pause, speeds, fast-forward | M0 (core), M1 (controls) | Calendar and clock; pause and three watching speeds. No fast-forward in play yet. |
+| Needs | Residents get hungry, tired, lonely, bored, and act to fix it | M1 | Hunger, rest, company and fun, each met by particular actions in particular places |
+| Schedules | People go to work and school; shops keep hours | M1 | Weekday, Saturday and Sunday timetables with Sunday dinner (P-016); the store keeps hours (P-017) |
+| Movement and places | Walking the block, entering buildings | M1 | Walking the street; going into the store; rooms in the player's home (P-017) |
+| Social interaction and relationships | Conversations that build or damage ties; people remember | M1 | Conversations outdoors, at the door and inside the store; regard each way; a history of conversation events per pair; a talk holds up what it interrupts (P-018) |
+| Household economy | Wages, rent, groceries, running short before payday | M1 (simple) | Wages for days worked, paid Friday; rent on Monday with shortfall carried forward; a pantry restocked at the store; thin meals when it is empty (P-019). All amounts invented. |
+| Building information | What is documented about a building and where it comes from, kept apart from invented interiors and residents | M1 (simple view) | Right-click any building (P-021) |
+| Personality and goals | Residents differ, and want different lives | M1 (traits), M2 (goals) | Traits only |
+| Life-event log and summaries | "While you were away" news; residents' memories | M1 (log), M2 (summaries) | The log; the end-of-week summary for the player's household (P-021). No summaries of skipped time yet. |
+| Lifecycle | Birthdays, growing up, births, marriage, death, moving | M2 | Birthdays only |
+| Detail levels | A neighborhood that carries on out of sight without slowing the game | M2 | Close and abstract levels; money agrees between them only roughly (P-020). No routine level or hand-off. |
+| Employment | Getting, losing and changing jobs; commuting | M2 | Fixed jobs from the scenario only |
+| Businesses | Shops with owners, staff, customers and fortunes | M2 | One fictional store with a storekeeper and customers; no fortunes |
+| Community events | Recurring traditions and one-off gatherings | M2 | Not started |
+| Historical timeline | Documented changes arrive on their dates | M3 | Not started |
+| Neighborhood memory | Reputation, gossip, shared history | M4 | Not started |
 
 ### Residents
 

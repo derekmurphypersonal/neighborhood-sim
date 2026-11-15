@@ -1,6 +1,6 @@
 # Time and Lifecycle Model, 1950–1959
 
-Status: updated 2026-11-13 after the second design review. Continuous time is confirmed (D-013), as are the history categories (D-018) and the requirements on detail levels, seeding and presentation-independence (D-025 to D-029). Aging from date of birth (D-030), player-driven divergence (D-033) and the scenario start for the first playable (D-034) are also confirmed. See [DECISIONS.md](../DECISIONS.md).
+Status: updated 2026-11-13 after the second design review; "as built" notes updated 2026-11-15 for M1-B steps 1 to 10. Continuous time is confirmed (D-013), as are the history categories (D-018) and the requirements on detail levels, seeding and presentation-independence (D-025 to D-029). Aging from date of birth (D-030), player-driven divergence (D-033) and the scenario start for the first playable (D-034) are also confirmed. See [DECISIONS.md](../DECISIONS.md).
 
 An earlier draft of this document described seasonal chapters with "interludes". That structure was not adopted and has been removed.
 
@@ -36,6 +36,8 @@ There is no mandatory structure of chapters, seasons or turns. The player decide
 
 Whenever the player has passed over a stretch of time, the game can present a summary of what happened in their household and around the neighborhood. Summaries are generated from the life-event log (§7), the same log that feeds residents' memories, so a summary never reports something that did not happen in the simulation.
 
+**As built (M1-B):** the first summary is the week summary. When the clock passes into a new Monday, the game opens a summary of the player's household's Monday-to-Sunday week, and the player can open the current week's so far at any time. It is computed from the event log alone (plus who is in the household): wages and other income, rent paid and still owed, groceries, days of work missed, days with an empty pantry, times the household was short of money, conversations with people outside the household and how regard changed, first meetings, and birthdays. It changes nothing in the simulation (P-021). Summaries of skipped time under fast-forward wait for fast-forward itself (M2).
+
 ## 3. Levels of detail *(confirmed requirements D-026, D-027, D-028)*
 
 The simulation does not track every footstep and conversation of every resident. How closely a resident is simulated depends on how close they are to the player's attention.
@@ -54,7 +56,7 @@ Rules:
 4. **Important events are level-independent.** Life events and timeline events are decided by the same rules at every level and always logged.
 5. **Start simple.** The first playable covers one block, where every resident can be simulated closely. Routine and abstract levels are added when the map or the time span requires them ([ROADMAP.md](ROADMAP.md)), but the clock and the systems are designed for them from the start.
 
-**As built (M1-A):** two levels exist. Close detail advances one minute at a time for everyone. The abstract level advances a day at a time and runs only birthdays and the weekly household budget; it is what the headless decade run uses. Both use the same day-level code, and a test checks that they agree. The routine level and moving residents between levels are not built yet.
+**As built (M1-B, steps 1 to 10):** two levels exist. Close detail advances one minute at a time for everyone. The abstract level advances a day at a time; it is what the headless decade run uses. Both run the same day-level code at each midnight: birthdays, wages credited for the day before, rent on Mondays, pay on Fridays. At close detail, wages depend on minutes actually spent at work and groceries on meals actually eaten and shopping trips actually made. The abstract level has no movements to go by, so it reckons money from timetables instead: everyone whose timetable has them at work that day is credited the wage, and each household pays for a day of groceries as far as its money goes. A day is never paid at both levels. As a result the levels agree exactly on what the calendar drives (birthdays, paydays, rent days) and only roughly on money: a test requires household money after four weeks to agree to within a quarter of four weeks' income (P-020, awaiting Derek's confirmation). The routine level and moving residents between levels are not built yet.
 
 ## 4. Reproducibility *(confirmed, D-017, D-025)*
 
