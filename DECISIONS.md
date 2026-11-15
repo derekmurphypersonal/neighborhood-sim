@@ -9,7 +9,7 @@ Rules for this file:
 - A proposal becomes confirmed only when Derek says so. It then gets a new D-number; the proposal row stays, pointing to it.
 - Each entry has an ID, a date and a source. Longer reasoning lives in the linked doc.
 
-Last updated: 2026-11-15 (M1-B steps 1 to 10 built; step 11 awaits Derek)
+Last updated: 2026-11-15 (M1 accepted by Derek; P-016 to P-022 confirmed; polish pass M1-P authorized)
 
 ## Confirmed
 
@@ -95,19 +95,28 @@ Last updated: 2026-11-15 (M1-B steps 1 to 10 built; step 11 awaits Derek)
 | D-046 | 2026-11-13 | **M1-B is authorized,** to the eleven steps of D-045. Derek also confirmed that D-042 stands. | Derek |
 | D-047 | 2026-11-13 | **`SaveGame.restore(text, world)` is the single way to load a save,** returning `ok`, `error`, `simulation` and `changed_data` and never crashing on bad input; `Simulation.from_save()` is its low-level step; file writing reports failures as text; the core does not decide where saves are kept; tests never write to the per-user data folder. From P-015. | Derek |
 
+### From the M1 judgment
+
+| ID | Date | Decision | Source |
+|---|---|---|---|
+| D-048 | 2026-11-15 | **M1 is accepted.** Derek: "The M1 playability is good for now." This is the judgment M1 "done when" item 7 asks for; the milestone is done. Recorded in [M1_PLAYTEST.md](docs/M1_PLAYTEST.md) §4. | Derek |
+| D-049 | 2026-11-15 | **Timetables by kind of day** (weekday, Saturday, Sunday). From P-016. | Derek |
+| D-050 | 2026-11-15 | **Institutions are area data; interiors are fiction assigned by the scenario; actions name a kind of room.** From P-017. | Derek |
+| D-051 | 2026-11-15 | **A conversation holds up what it interrupts,** and the interrupted activity's end moves back by the length of the talk. From P-018. | Derek |
+| D-052 | 2026-11-15 | **Household money follows behavior:** wages per day worked paid Friday, rent Monday with shortfall carried forward, a pantry restocked at the store, money never below zero; every amount invented and never presented as historical. From P-019. | Derek |
+| D-053 | 2026-11-15 | **Detail levels agree exactly only on what the calendar drives;** money agrees roughly. From P-020. | Derek |
+| D-054 | 2026-11-15 | **Reports are read-only code in `game/sim/reports/`.** From P-021. | Derek |
+| D-055 | 2026-11-15 | **One saved game in the per-user data folder, for now.** From P-022. Q-016 stays open for exported builds. | Derek |
+| D-056 | 2026-11-15 | **Pacing answers from the M1 judgment:** relationships grow at an acceptable pace (pacing question 1), and the first week's lack of rent stays as it is (question 6). Neither is to be changed without Derek. The other pacing questions in `docs/M1_PLAYTEST.md` §3 remain open as observations. | Derek |
+| D-057 | 2026-11-15 | **Polish pass (M1-P) authorized before M2:** keep iterating on playability, graphics, look and feel so the week feels like a well-polished, fun game. Still on Fixture Street; no M2 systems (fast-forward detail levels, life events, goals). Working scope and art approach are proposal P-023. | Derek |
+
 ## Proposals
 
-These were implemented during M1-B (authorized scope, D-045) and are recorded here as proposals. None is a confirmed decision until Derek confirms it.
+None is a confirmed decision until Derek confirms it.
 
 | ID | Proposal | Status |
 |---|---|---|
-| P-016 | **Timetables by kind of day.** A schedule has three day plans, `weekday`, `saturday` and `sunday`, each with waking and bed times, an optional away period (work or school) and optional fixed household mealtimes. | Implemented in M1-B step 2; awaiting Derek |
-| P-017 | **Institutions are area data; interiors are fiction assigned by the scenario.** An institution record names a building, a kind and opening hours per kind of day. A floor plan lives in `data/fiction/interiors/` and a scenario assigns it to a building of a matching type. Actions name a kind of room, not a particular room. | Implemented in steps 3 to 5; awaiting Derek |
-| P-018 | **A conversation holds up what it interrupts.** Being inside an institution, working there, shopping, or waiting where the player sent you is taken up again after a talk, with its end moved back by the length of the talk. | Implemented in step 3; awaiting Derek |
-| P-019 | **Household money follows behavior.** Wages are earned per day actually worked (enough minutes at work) and paid on Friday; rent is due on Monday and any shortfall is carried forward; meals come out of a pantry that an adult restocks at the store; with an empty pantry meals are thin. Money never goes below zero. Every wage, rent and price is invented (scenario data and `gameplay_tuned` tuning) and is never presented as historical. | Implemented in step 7; awaiting Derek |
-| P-020 | **Detail levels agree exactly only on what the calendar drives.** With money following behavior, the day-by-day level reckons wages and groceries from timetables, so it agrees with minute-by-minute play only roughly (tested to within a quarter of four weeks' income). Birthdays, paydays and rent days still fall identically. This replaces the M1-A test that required identical household money at both levels. | Implemented in step 7; awaiting Derek |
-| P-021 | **Reports are read-only code in `game/sim/reports/`.** The week summary is computed from the event log alone (plus household membership); building information returns documented exterior, fictional interior, institution and fictional households as separate parts. Neither changes state. | Implemented in steps 8 and 9; awaiting Derek |
-| P-022 | **One saved game, in the per-user data folder, for now.** The menu saves to and loads from a single file, `user://saved_game.json`. Where saves belong in an exported build remains open (Q-016). | Implemented in step 10; awaiting Derek |
+| P-023 | **Scope and approach of the M1-P polish pass.** (a) Presentation first: drawing, interface, sound and controls change freely; the simulation core changes only when playability needs it, each such change recorded and tested, and no M2 system is built. (b) The working look is a warm mid-century palette drawn entirely in code (gabled houses with windows and doors, sidewalks, trees, small figures, a softer day-and-night cycle) with no bundled images or fonts, so nothing needs a licence (Q-011). Decorations such as trees, fences and paint colors are invented, presentation-only and chosen deterministically from IDs, never stored in simulation state. Final art direction (Q-008) stays open. | Proposed 2026-11-15; awaiting Derek |
 
 ### Closed proposals
 
@@ -129,6 +138,13 @@ Kept so that older references resolve.
 | P-012 | Fictional dev fixture until research is ready | Confirmed as D-022 |
 | P-015 | `SaveGame.restore()` as the single way to load a save; failures reported, not fatal; tests keep out of the per-user data folder | Confirmed as D-047 |
 | P-014 | Simulation records as plain dictionaries with no fractional numbers in state, in place of typed state classes | Confirmed as D-042 |
+| P-016 | Timetables by kind of day | Confirmed as D-049 |
+| P-017 | Institutions are area data; interiors are fiction assigned by the scenario | Confirmed as D-050 |
+| P-018 | A conversation holds up what it interrupts | Confirmed as D-051 |
+| P-019 | Household money follows behavior | Confirmed as D-052 |
+| P-020 | Detail levels agree exactly only on what the calendar drives | Confirmed as D-053 |
+| P-021 | Reports are read-only code in `game/sim/reports/` | Confirmed as D-054 |
+| P-022 | One saved game, in the per-user data folder, for now | Confirmed as D-055 |
 | P-013 | Original: "Interiors are openly fictional… room layouts are typical-of-type designs marked `fictional`." Revised (rev. 1): modular fictional floor plans matched to documented exterior building types, kept distinct from verified exteriors | Revised wording confirmed as D-032 |
 
 ## Open questions
@@ -139,7 +155,7 @@ Kept so that older references resolve.
 | Q-004 | **How long should a full playthrough be?** | Determine through playtesting. Under continuous time (D-013) this depends on speed settings and how players use fast-forward. First pacing observations of the M1-B week, from unattended runs and screenshots rather than a person playing, and the pacing questions they raise, are in [M1_PLAYTEST.md](docs/M1_PLAYTEST.md). | From M1 playtests onward |
 | Q-006 | **How are the social realities of the 1950s represented?** | Research before implementing resident-generation rules. Do not model by assumption. | Before resident generation uses real patterns |
 | Q-007 | **Household switching.** | Deferred until after the first playable (D-014). | After M1 |
-| Q-008 | **Final art direction.** | Deferred. M1 uses plain placeholder art. | After M1 |
+| Q-008 | **Final art direction.** | M1 used plain placeholder art. The M1-P polish pass uses a working look drawn in code (P-023); the final direction is still open. | Before any public release |
 | Q-009 | **Final commercial game title.** | Deferred. "The Neighborhood" is the working title; the project and folder are named "LindenSims". | Before any public release |
 | Q-011 | **Source licensing.** Which maps and photographs may be reproduced, versus only consulted? | Document rights and reproduction restrictions per source in [SOURCES.md](docs/research/SOURCES.md). | Ongoing; before any source image is bundled |
 | Q-016 | **Where do data files and saves live in an exported build?** | Data is read from beside the project folder, which works when running from the repository. Saves go to the engine's per-user folder. | Before the first exported build |
@@ -177,3 +193,4 @@ Kept so that older references resolve.
 | 2026-11-13 | Derek ran the checks on the Mac: all pass, hashes identical to Linux. D-042 confirmed to stand; P-015 confirmed as D-047; M1-B authorized (D-046). |
 | 2026-11-15 | M1-B steps 1 to 10 implemented on the fictional fixture and committed one step at a time. Lasting choices made on the way are recorded as proposals P-016 to P-022, not as decisions. Step 11 (week playtest write-up and the M1 judgment) and the documentation reconciliation are outstanding; see `docs/HANDOFF.md`. |
 | 2026-11-15 | No new decisions. Documents reconciled with what M1-B built. Pacing observations from unattended runs written up in `docs/M1_PLAYTEST.md` and linked from Q-004; the M1 judgment there is left for Derek. P-016 to P-022 still await him. |
+| 2026-11-15 | Derek accepted M1 (D-048), confirmed P-016 to P-022 as D-049 to D-055, answered pacing questions 1 and 6 (D-056) and authorized a polish pass, M1-P (D-057). P-023 proposes its scope and working look. Q-008 updated. |

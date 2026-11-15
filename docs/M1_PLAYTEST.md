@@ -61,10 +61,12 @@ How long a whole playthrough should be (Q-004) cannot be judged from one unatten
 
 ## 4. M1 judgment
 
-*To be given by Derek after playing the week (M1 "done when" item 7 in [ROADMAP.md](ROADMAP.md)). Not yet given.*
+Given by Derek on 2026-11-15 and recorded as D-048 and D-056.
 
-Played on:
-
-Judgment:
+Judgment: **accepted.** "The M1 playability is good for now." The loop is worth extending, first through a polish pass on playability, graphics and look and feel (M1-P, D-057).
 
 Pacing notes:
+
+- Question 1: relationships grow at a fine pace. No change.
+- Question 6: the first week without rent is fine as it is. No change.
+- Questions 2, 3, 4, 5 and 7 were not answered and stay open as observations.

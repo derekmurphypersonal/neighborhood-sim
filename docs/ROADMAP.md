@@ -1,6 +1,6 @@
 # Roadmap and First Playable Milestone
 
-Status: updated 2026-11-15. **M0 is reviewed and accepted. M1-A is the accepted small playable loop on the fictional Fixture Street (D-041, D-044). M1-B is authorized (D-046); steps 1 to 10 are built on Fixture Street, and step 11 (a week played by Derek and his M1 judgment) is outstanding.** See [DECISIONS.md](../DECISIONS.md).
+Status: updated 2026-11-15. **M0 is reviewed and accepted. M1 is accepted by Derek (D-048). A polish pass, M1-P, is authorized before M2 (D-057); its working scope is proposal P-023.** See [DECISIONS.md](../DECISIONS.md).
 
 Milestones are defined by what a player can do at the end of each, not by which systems exist.
 
@@ -10,7 +10,7 @@ Milestones are defined by what a player can do at the end of each, not by which 
 |---|---|---|---|
 | Pre-production | Documentation and review | — read a documented, reviewed design and plan | Done |
 | **M0** | Groundwork | — nothing yet; a decade runs headless on a fixture, and candidate blocks in the real Linden are identified | Done; no historical data entered yet |
-| **M1** | **A Week on the Block** | live one week of spring 1950 with one household on one block, with pause and speed controls | M1-A accepted; M1-B steps 1–10 built, step 11 awaits Derek |
+| **M1** | **A Week on the Block** | live one week of spring 1950 with one household on one block, with pause and speed controls | Accepted (D-048); polish pass M1-P under way (D-057) |
 | M2 | A Year on the Block | play through 1950 continuously, fast-forwarding at will, with birthdays, life events and summaries of skipped time | |
 | M3 | The Decade on the Block | play 1950–1959 on that block, with documented changes arriving on their dates | |
 | M4+ | Widening Linden | play on a growing map, block by researched block | |
@@ -160,7 +160,7 @@ The list below is unchanged. Where each item stands on 2026-11-15, after M1-B st
 | 4. Choices produce visibly different weeks | Met in automated tests (an ordered conversation happens and the state differs from an undirected run). Whether the difference is visible to a player is for Derek to judge. |
 | 5. Save, quit, load and continue | Met in automated tests and in the self-check's save and load through the menu. |
 | 6. Automated tests pass | Met: 105 tests, 2014 checks, 0 failed. |
-| 7. Derek's judgment and pacing observations | Pacing observations from unattended runs and screenshots, not from a person playing, are in [M1_PLAYTEST.md](M1_PLAYTEST.md), linked from Q-004. Derek's judgment is outstanding. |
+| 7. Derek's judgment and pacing observations | Met: Derek accepted M1 on 2026-11-15 (D-048) and answered two pacing questions (D-056). Observations and his judgment are in [M1_PLAYTEST.md](M1_PLAYTEST.md). |
 
 ### Research still needed for Maynard Street
 
@@ -168,6 +168,10 @@ The list below is unchanged. Where each item stands on 2026-11-15, after M1-B st
 2. A person's confirmation of those readings.
 3. A 1950s aerial photograph and a 1950s street directory (still not found).
 4. An answer to Q-017 (how the scenario's fictional residents are named).
+
+## M1-P: polish pass *(authorized, D-057)*
+
+Make the accepted week look and play like a finished small game, still on Fixture Street: a warmer, more detailed drawing of the street, houses and people; a clearer, better-looking interface; smoother controls; and small playability fixes. No M2 systems. Scope and the working look are proposal P-023. What has been done is listed in `docs/HANDOFF.md` until the pass is reviewed.
 
 ## M2: A Year on the Block
 
