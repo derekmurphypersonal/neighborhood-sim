@@ -107,13 +107,17 @@ static func event(sim: RefCounted, entry: Dictionary) -> String:
 
 
 ## A household's week as text for the summary sheet. The summary itself is
-## made by sim/reports/week_summary.gd from the event log.
-static func week_summary(sim: RefCounted, summary: Dictionary) -> String:
+## made by sim/reports/week_summary.gd from the event log; goals, if given,
+## come from sim/reports/week_goals.gd.
+static func week_summary(sim: RefCounted, summary: Dictionary, goals: Array = []) -> String:
 	var lines: Array[String] = []
 	lines.append("%s %s to %s %s" % [
 		SimDate.weekday_name(summary["first_day"]), SimDate.to_iso(summary["first_day"]),
 		SimDate.weekday_name(summary["last_day"]), SimDate.to_iso(summary["last_day"]),
 	])
+	if not goals.is_empty():
+		lines.append("")
+		lines.append_array(_goals_tried(goals))
 	lines.append("")
 	lines.append("[b]Money[/b]")
 	lines.append("  Wages paid: %s" % money(summary["wages_cents"]))
@@ -159,6 +163,30 @@ static func week_summary(sim: RefCounted, summary: Dictionary) -> String:
 		for birthday: Dictionary in summary["birthdays"]:
 			lines.append("  %s turned %d." % [given_name(sim, birthday["person_id"]), birthday["age"]])
 	return "\n".join(lines)
+
+
+## The week's things to try, grouped by how they went, in a few lines so the
+## sheet stays short.
+static func _goals_tried(goals: Array) -> Array[String]:
+	var groups: Dictionary = {}
+	var done: int = 0
+	for goal: Dictionary in goals:
+		if goal["status"] == "done":
+			done += 1
+		if not groups.has(goal["status"]):
+			groups[goal["status"]] = []
+		(groups[goal["status"]] as Array).append(goal["title"])
+	var lines: Array[String] = ["[b]Things you tried[/b]: %d of %d done" % [done, goals.size()]]
+	for entry: Array in GOAL_GROUPS:
+		if groups.has(entry[0]):
+			lines.append("  [color=%s]%s:[/color] %s" % [entry[2], entry[1], ", ".join(PackedStringArray(groups[entry[0]]))])
+	return lines
+
+
+const GOAL_GROUPS: Array = [
+	["done", "Done", "#ffd166"], ["on_track", "On track", "#9fd3c7"],
+	["open", "Not yet", "#e8dcc0"], ["missed", "Missed", "#f4a38f"],
+]
 
 
 const FACT_LABELS: Dictionary = {"building_type": "Kind of building", "stories": "Stories"}

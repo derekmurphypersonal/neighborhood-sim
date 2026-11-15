@@ -54,6 +54,12 @@ const INK: Color = Color("#3B2F2A")
 const INK_SOFT: Color = Color("#7A6658")
 const LEAF: Color = Color("#5E8C4A")
 const SHADOW: Color = Color(0.12, 0.08, 0.05, 0.30)
+## The goals card sits in the left column, between the home cutaway drawn by
+## world_view (ending at y 370) and the feed (starting at y 512).
+const GOALS_RECT: Rect2 = Rect2(20, 379, 232, 126)
+const GOAL_ROWS: int = 7
+const GOAL_ROW_HEIGHT: int = 14
+const GOAL_FONT_SIZE: int = 12
 
 var simulation: Simulation
 var _date_label: Label
@@ -80,6 +86,9 @@ var _sheet: PanelContainer
 var _sheet_title: Label
 var _sheet_text: RichTextLabel
 var _sheet_buttons: HBoxContainer
+## "Things to try this week": one drawn row per goal, from sim/reports/week_goals.gd.
+var _goal_rows: Array[Control] = []
+var _goals: Array = []
 
 
 func setup(sim: Simulation) -> void:
@@ -91,6 +100,7 @@ func setup(sim: Simulation) -> void:
 	_build_top_bar()
 	_build_side_panel()
 	_build_feed()
+	_build_goals()
 	_build_sheet()
 
 
@@ -177,6 +187,9 @@ func _make_theme() -> Theme:
 	t.set_type_variation("Note", "PanelContainer")
 	t.set_stylebox("panel", "Note", _box(Color(PAPER, 0.88), 9, 12, 2))
 
+	t.set_type_variation("GoalsCard", "PanelContainer")
+	t.set_stylebox("panel", "GoalsCard", _with_shadow(_with_border(_box(PAPER, 10, 10, 6), PAPER_DARK.darkened(0.15), 1), 6))
+
 	t.set_type_variation("Sheet", "PanelContainer")
 	t.set_stylebox("panel", "Sheet", _with_shadow(_with_border(_box(TEAL_DARK, 12, 22, 18), MUSTARD, 3), 18))
 
@@ -247,8 +260,8 @@ func _build_top_bar() -> void:
 	_music_button = _toggle("Music", func(on: bool) -> void: music_toggled.emit(on))
 	_music_button.tooltip_text = "Turn the music on or off  (M)"
 	bar.add_child(_music_button)
-	_sound_button = _toggle("Chimes", func(on: bool) -> void: sound_toggled.emit(on))
-	_sound_button.tooltip_text = "Turn the chimes for news on or off"
+	_sound_button = _toggle("Sounds", func(on: bool) -> void: sound_toggled.emit(on))
+	_sound_button.tooltip_text = "Turn the sounds on or off: the chimes for news and the birds and crickets outside"
 	bar.add_child(_sound_button)
 	var filler: Control = Control.new()
 	filler.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -423,6 +436,80 @@ func _build_feed() -> void:
 	column.add_child(_feed)
 
 
+## A small card under the home cutaway listing this week's things to try.
+## Rows are drawn by hand so seven fit in the space; each has the goal's hint
+## as its tooltip.
+func _build_goals() -> void:
+	var card: PanelContainer = PanelContainer.new()
+	card.theme_type_variation = "GoalsCard"
+	card.position = GOALS_RECT.position
+	card.custom_minimum_size = GOALS_RECT.size
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(card)
+	var column: VBoxContainer = VBoxContainer.new()
+	column.add_theme_constant_override("separation", 0)
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(column)
+	var heading: Label = _caption("THINGS TO TRY THIS WEEK")
+	heading.add_theme_color_override("font_color", TEAL)
+	column.add_child(heading)
+	for index: int in GOAL_ROWS:
+		var row: Control = Control.new()
+		row.custom_minimum_size = Vector2(0, GOAL_ROW_HEIGHT)
+		row.mouse_filter = Control.MOUSE_FILTER_PASS
+		row.draw.connect(func() -> void: _draw_goal(row, index))
+		column.add_child(row)
+		_goal_rows.append(row)
+
+
+## Takes the goals for the week being played (worked out in main.gd).
+func show_goals(goals: Array) -> void:
+	if goals == _goals:
+		return
+	_goals = goals
+	for index: int in _goal_rows.size():
+		var row: Control = _goal_rows[index]
+		row.visible = index < goals.size()
+		row.tooltip_text = goals[index]["hint"] if index < goals.size() else ""
+		row.queue_redraw()
+
+
+func _draw_goal(row: Control, index: int) -> void:
+	if index >= _goals.size():
+		return
+	var goal: Dictionary = _goals[index]
+	var status: String = goal["status"]
+	var font: Font = row.get_theme_default_font()
+	var middle: float = row.size.y / 2.0
+	var box: Rect2 = Rect2(1, middle - 5, 10, 10)
+	match status:
+		"done":
+			row.draw_rect(box, MUSTARD)
+			row.draw_rect(box, MUSTARD.darkened(0.35), false, 1.0)
+			row.draw_polyline(PackedVector2Array([
+				box.position + Vector2(2, 5), box.position + Vector2(4.5, 7.5), box.position + Vector2(8.5, 2),
+			]), TEAL_DARK, 2.0)
+		"missed":
+			row.draw_rect(box, CHERRY, false, 1.0)
+			row.draw_line(box.position + Vector2(2, 2), box.end - Vector2(2, 2), CHERRY, 2.0)
+			row.draw_line(box.position + Vector2(8, 2), box.position + Vector2(2, 8), CHERRY, 2.0)
+		"on_track":
+			row.draw_rect(box, INK_SOFT, false, 1.0)
+			row.draw_circle(box.get_center(), 2.0, TEAL)
+		_:
+			row.draw_rect(box, INK_SOFT, false, 1.0)
+	var color: Color = INK
+	if status == "done":
+		color = INK_SOFT
+	elif status == "missed":
+		color = CHERRY
+	var baseline: float = middle + GOAL_FONT_SIZE * 0.35
+	row.draw_string(font, Vector2(17, baseline), goal["title"], HORIZONTAL_ALIGNMENT_LEFT, row.size.x - 50, GOAL_FONT_SIZE, color)
+	if int(goal["target"]) > 1:
+		var count: String = "%d/%d" % [goal["progress"], goal["target"]]
+		row.draw_string(font, Vector2(row.size.x - 34, baseline), count, HORIZONTAL_ALIGNMENT_RIGHT, 34, GOAL_FONT_SIZE - 1, TEAL)
+
+
 ## A sheet laid over the middle of the screen for something to read: the
 ## week's summary, what is known about a building, the menu. The rest of the
 ## screen is dimmed and does not take clicks while it is open.
@@ -575,7 +662,7 @@ func refresh(selected_id: String, speed_index: int, music_on: bool, sound_on: bo
 	_music_button.set_pressed_no_signal(music_on)
 	_music_button.text = "Music on" if music_on else "Music off"
 	_sound_button.set_pressed_no_signal(sound_on)
-	_sound_button.text = "Chimes on" if sound_on else "Chimes off"
+	_sound_button.text = "Sounds on" if sound_on else "Sounds off"
 	for person_id: String in _member_buttons:
 		(_member_buttons[person_id] as Button).set_pressed_no_signal(person_id == selected_id)
 

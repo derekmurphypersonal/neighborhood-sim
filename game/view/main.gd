@@ -17,6 +17,7 @@ const BuildingInfo := preload("res://sim/reports/building_info.gd")
 const SaveGame := preload("res://sim/io/save_game.gd")
 const SimDate := preload("res://sim/clock/sim_date.gd")
 const WeekSummary := preload("res://sim/reports/week_summary.gd")
+const WeekGoals := preload("res://sim/reports/week_goals.gd")
 
 const SCENARIO: String = "fixture_street_spring_1950"
 ## Game minutes per real second for each speed setting.
@@ -26,6 +27,17 @@ const MUSIC_FILE: String = "music_placeholder_waltz.ogg"
 const MUSIC_VOLUME_DB: float = -14.0
 const CHIME_VOLUME_DB: float = -9.0
 const CHIME_GAP_MS: int = 450
+## Outdoor ambience sits well under the music. The day bed is full from 06:30
+## to 18:30; it crossfades to the night crickets over dusk (18:30 to 20:30)
+## and back over dawn (04:30 to 06:30). Times are minutes after midnight.
+const AMBIENCE_DAY_FILE: String = "ambience_day.ogg"
+const AMBIENCE_NIGHT_FILE: String = "ambience_night.ogg"
+const AMBIENCE_VOLUME_DB: float = -19.0
+const DAWN_START: int = 270
+const DAWN_END: int = 390
+const DUSK_START: int = 1110
+const DUSK_END: int = 1230
+const SILENT_DB: float = -80.0
 ## Indoor activities not worth a note over the house.
 const QUIET_INDOORS: Array[String] = ["At home", "Deciding what to do", "Heading home"]
 
@@ -49,6 +61,8 @@ var _screenshot_zoom: float = 1.0
 var _music: AudioStreamPlayer
 var _chime_talk: AudioStreamPlayer
 var _chime_notice: AudioStreamPlayer
+var _ambience_day: AudioStreamPlayer
+var _ambience_night: AudioStreamPlayer
 var _last_chime_ms: int = 0
 var _last_activity: Dictionary = {}
 var _last_at: Dictionary = {}
@@ -56,6 +70,10 @@ var _last_funds: Dictionary = {}
 var _seen_events: int = 0
 ## The Monday of the week now being played, for the end-of-week summary.
 var _week_start: int = 0
+## The week the goals were last worked out for, and each goal's status then,
+## so that a goal is announced only when it becomes done during play.
+var _goals_week: int = -1
+var _goal_status: Dictionary = {}
 ## The speed to go back to when a sheet is closed.
 var _speed_before_sheet: int = -1
 
@@ -91,6 +109,8 @@ func _ready() -> void:
 	if checking:
 		sound_on = false  # the check confirms the audio loads; it does not play it
 		_self_check()
+	else:
+		_show_welcome()
 
 
 func _process(delta: float) -> void:
@@ -110,6 +130,7 @@ func _process(delta: float) -> void:
 	world_view.selected_id = selected_id
 	world_view.queue_redraw()
 	hud.refresh(selected_id, speed_index, music_on, sound_on)
+	_mix_ambience()
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -147,6 +168,8 @@ func _show_simulation(shown: Simulation) -> void:
 	_last_funds.clear()
 	_seen_events = 0
 	_week_start = WeekSummary.week_start(simulation.clock.day_index)
+	_goals_week = -1
+	_goal_status.clear()
 
 	world_view = WorldView.new()
 	world_view.setup(simulation)
@@ -162,7 +185,7 @@ func _show_simulation(shown: Simulation) -> void:
 	hud.person_chosen.connect(_select)
 	hud.order_given.connect(_give_order)
 	hud.music_toggled.connect(_set_music)
-	hud.sound_toggled.connect(func(on: bool) -> void: sound_on = on)
+	hud.sound_toggled.connect(_set_sound)
 	hud.week_requested.connect(func() -> void: _show_week(_week_start, "This week so far"))
 	hud.menu_requested.connect(_show_menu)
 	hud.sheet_closed.connect(_on_sheet_closed)
@@ -252,7 +275,8 @@ func _show_building(building_id: String) -> void:
 func _show_week(first_day: int, title: String) -> void:
 	var household_id: String = simulation.state.player_household_id()
 	var summary: Dictionary = WeekSummary.summarize(simulation.state, household_id, first_day, first_day + 6)
-	_open_sheet("%s: the %s" % [title, simulation.state.households[household_id]["name"]], Describe.week_summary(simulation, summary))
+	var goals: Array = WeekGoals.evaluate(simulation.state, household_id, first_day, first_day + 6, simulation.clock.day_index)
+	_open_sheet("%s: the %s" % [title, simulation.state.households[household_id]["name"]], Describe.week_summary(simulation, summary, goals))
 
 
 # --- Selecting and ordering --------------------------------------------------
@@ -345,6 +369,7 @@ func _watch(announce: bool) -> void:
 		if announce:
 			_announce_event(log[index])
 	_seen_events = log.size()
+	_check_goals(announce)
 
 	for household_id: String in simulation.state.sorted_household_ids():
 		var household: Dictionary = simulation.state.households[household_id]
@@ -355,6 +380,21 @@ func _watch(announce: bool) -> void:
 			var text: String = "%s$%.2f" % ["+" if change > 0 else "-", absf(change / 100.0)]
 			world_view.add_float(anchor["point"], anchor["lift"], text, WorldView.COLOR_GOOD if change > 0 else WorldView.COLOR_BAD)
 		_last_funds[household_id] = household["funds_cents"]
+
+
+## Works out this week's things to try, shows them, and announces any that
+## have just been done. Nothing is announced for a goal already done when the
+## game started or was loaded, or when a new week begins.
+func _check_goals(announce: bool) -> void:
+	var first_day: int = WeekSummary.week_start(simulation.clock.day_index)
+	var goals: Array = WeekGoals.evaluate(simulation.state, simulation.state.player_household_id(), first_day, first_day + 6, simulation.clock.day_index)
+	for goal: Dictionary in goals:
+		if announce and first_day == _goals_week and goal["status"] == "done" and _goal_status.get(goal["id"], "") != "done":
+			world_view.add_toast("Done: %s" % goal["title"])
+			_chime(_chime_notice)
+		_goal_status[goal["id"]] = goal["status"]
+	_goals_week = first_day
+	hud.show_goals(goals)
 
 
 func _announce_event(event: Dictionary) -> void:
@@ -382,16 +422,27 @@ func _announce_event(event: Dictionary) -> void:
 
 # --- Sound -------------------------------------------------------------------
 
-func _setup_audio(start_music: bool) -> void:
+## Loads every sound. Only when start_playing is true do the music and the
+## ambience start; the self-check loads them without playing anything.
+func _setup_audio(start_playing: bool) -> void:
 	_music = _player(MUSIC_FILE, MUSIC_VOLUME_DB)
 	_chime_talk = _player("chime_talk.ogg", CHIME_VOLUME_DB)
 	_chime_notice = _player("chime_notice.ogg", CHIME_VOLUME_DB)
+	_ambience_day = _player(AMBIENCE_DAY_FILE, SILENT_DB)
+	_ambience_night = _player(AMBIENCE_NIGHT_FILE, SILENT_DB)
 	if _music != null:
 		(_music.stream as AudioStreamOggVorbis).loop = true
-		if start_music:
+		if start_playing:
 			_music.play()
 	else:
 		music_on = false
+	for player: AudioStreamPlayer in [_ambience_day, _ambience_night]:
+		if player != null:
+			(player.stream as AudioStreamOggVorbis).loop = true
+			if start_playing:
+				player.play()
+	if start_playing:
+		_mix_ambience()
 
 
 ## Loads a sound straight from the project folder, so no editor import step
@@ -418,6 +469,50 @@ func _set_music(on: bool) -> void:
 			_music.play()
 
 
+## One toggle covers the chimes and the ambience; the music has its own.
+func _set_sound(on: bool) -> void:
+	sound_on = on
+	for player: AudioStreamPlayer in [_ambience_day, _ambience_night]:
+		if player != null:
+			player.stream_paused = not on
+			if on and not player.playing:
+				player.play()
+	_mix_ambience()
+
+
+## How much of the day bed (rather than the night crickets) to hear at a time
+## of day given in minutes after midnight: 1 by day, 0 by night, a straight
+## ramp through dawn and dusk.
+static func day_share(minute_of_day: int) -> float:
+	if minute_of_day < DAWN_START or minute_of_day >= DUSK_END:
+		return 0.0
+	if minute_of_day < DAWN_END:
+		return float(minute_of_day - DAWN_START) / float(DAWN_END - DAWN_START)
+	if minute_of_day < DUSK_START:
+		return 1.0
+	return 1.0 - float(minute_of_day - DUSK_START) / float(DUSK_END - DUSK_START)
+
+
+## Sets the two ambience levels from the simulation clock (never wall-clock
+## time). An equal-power crossfade keeps the overall level steady at dusk.
+func _mix_ambience() -> void:
+	if _ambience_day == null or _ambience_night == null or simulation == null:
+		return
+	if not sound_on:
+		_ambience_day.volume_db = SILENT_DB
+		_ambience_night.volume_db = SILENT_DB
+		return
+	var share: float = day_share(simulation.clock.minute_of_day)
+	_ambience_day.volume_db = _ambience_db(sin(share * PI * 0.5))
+	_ambience_night.volume_db = _ambience_db(cos(share * PI * 0.5))
+
+
+static func _ambience_db(gain: float) -> float:
+	if gain <= 0.001:
+		return SILENT_DB
+	return maxf(AMBIENCE_VOLUME_DB + linear_to_db(gain), SILENT_DB)
+
+
 func _chime(player: AudioStreamPlayer) -> void:
 	var now: int = Time.get_ticks_msec()
 	if player == null or not sound_on or now - _last_chime_ms < CHIME_GAP_MS:
@@ -434,14 +529,26 @@ func _chime(player: AudioStreamPlayer) -> void:
 func _self_check() -> void:
 	set_process(false)
 	var problems: Array[String] = []
-	for entry: Array in [["music", _music], ["talk chime", _chime_talk], ["notice chime", _chime_notice]]:
+	for entry: Array in [["music", _music], ["talk chime", _chime_talk], ["notice chime", _chime_notice],
+			["day ambience", _ambience_day], ["night ambience", _ambience_night]]:
 		var player: AudioStreamPlayer = entry[1]
 		if player == null or player.stream == null or player.stream.get_length() <= 0.0:
 			problems.append("%s did not load" % entry[0])
 		else:
 			print("SELF-CHECK  %s loaded, %.1f seconds" % [entry[0], player.stream.get_length()])
-	if _music != null and not (_music.stream as AudioStreamOggVorbis).loop:
-		problems.append("music is not set to loop")
+	for entry: Array in [["music", _music], ["day ambience", _ambience_day], ["night ambience", _ambience_night]]:
+		var looped: AudioStreamPlayer = entry[1]
+		if looped != null and not (looped.stream as AudioStreamOggVorbis).loop:
+			problems.append("%s is not set to loop" % entry[0])
+	for entry: Array in [[0, 0.0], [300, 0.25], [720, 1.0], [1170, 0.5], [1260, 0.0]]:
+		if not is_equal_approx(day_share(entry[0]), entry[1]):
+			problems.append("ambience mix at minute %d is %.2f, expected %.2f" % [entry[0], day_share(entry[0]), entry[1]])
+	print("SELF-CHECK  ambience follows the clock: day share %.2f at noon, %.2f at 19:30, %.2f at midnight" \
+			% [day_share(720), day_share(1170), day_share(0)])
+	for entry: Array in [["music", _music], ["day ambience", _ambience_day], ["night ambience", _ambience_night]]:
+		var silent: AudioStreamPlayer = entry[1]
+		if silent != null and silent.playing:
+			problems.append("%s is playing during the check" % entry[0])
 	var refusal: String = simulation.give_order(selected_id, {"kind": "go_home"})
 	if refusal != "":
 		problems.append("an order to the player's household was refused: " + refusal)
@@ -500,6 +607,28 @@ func _show_for_screenshot() -> void:
 			_show_menu()
 		"week":
 			_show_week(WeekSummary.week_start(simulation.clock.day_index - 1), "The week that was")
+		"welcome":
+			_show_welcome()
+
+
+## A short welcome at the start of a new game: what this is, and the controls.
+func _show_welcome() -> void:
+	var household: String = simulation.state.households[simulation.state.player_household_id()]["name"]
+	var lines: Array[String] = [
+		"You look after the [b]%s[/b] for one week in spring 1950, minute by minute. The neighbors live their own lives, and so does your family unless you step in." % household,
+		"",
+		"[color=#ffeb8c]Fixture Street is a made-up test street used while the game is being built. It is not a real place, and everyone on it is invented.[/color]",
+		"",
+		"[b]Playing[/b]",
+		"[ul]Click someone in your household (in blue), then click a neighbor to talk, a house to visit, or a room in [i]Inside your home[/i].",
+		"Right-click any building to read about it.[/ul]",
+		"",
+		"[b]Keys[/b]",
+		"  [b]Space[/b] pause      [b]1 2 3[/b] speed      [b]Esc[/b] menu      [b]M[/b] music",
+		"  [b]Scroll[/b] zoom      [b]Drag[/b] or [b]arrows[/b] look around      [b]R[/b] reset the view",
+		"  [b]F[/b] follow the selected person",
+	]
+	_open_sheet("Welcome to Fixture Street", "\n".join(lines), [], "Start the week")
 
 
 ## Development aid: run some minutes, save a picture of the screen, and quit.

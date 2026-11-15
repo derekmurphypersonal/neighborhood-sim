@@ -41,6 +41,17 @@ const FLOAT_MS: int = 2600
 const HOUSE_NOTE_MS: int = 3200
 const TOAST_MS: int = 4500
 const MAX_FLOATS: int = 14
+const FOLLOW_EASE: float = 3.0
+
+## Game minutes (of the day) when kitchen stoves and furnaces send smoke up
+## the chimney: early morning, midday and supper. Invented, for atmosphere.
+const SMOKE_TIMES: Array[Vector2i] = [Vector2i(360, 510), Vector2i(690, 810), Vector2i(1020, 1170)]
+const FLOWER_COLORS: Array[Color] = [
+	Color(0.86, 0.22, 0.20), Color(0.97, 0.82, 0.25), Color(0.98, 0.97, 0.93), Color(0.95, 0.58, 0.70),
+]
+const WASHING: Array[Color] = [
+	Color(0.98, 0.97, 0.93), Color(0.70, 0.82, 0.92), Color(0.95, 0.70, 0.72), Color(0.96, 0.90, 0.62), Color(0.80, 0.88, 0.76),
+]
 
 # The interface palette (shared with the HUD).
 const PAPER: Color = Color("#F3E9D2")
@@ -149,6 +160,17 @@ var _cars: Array = []       # {"x", "y", "along_x", "paint"}
 var _tufts: Array = []      # {"x", "y", "light"}
 var _fences: Array = []     # [[a, b], ...] world segments
 var _walks: Array = []      # [door_point, street_point]
+var _flowers: Array = []    # {"x", "y", "dots": [[dx, dy, Color], ...]}
+var _mailboxes: Array = []  # {"x", "y", "along" (Vector2, world), "paint"}
+var _clotheslines: Array = []  # {"a", "b" (world Vector2), "items": [[t, width, drop, Color], ...]}
+## building_id -> Vector3(x, y, z) of the top of its chimney (houses only)
+var _chimneys: Dictionary = {}
+var _clouds: Array = []     # {"x", "y", "blobs": [[dx, dy, radius], ...]}
+## The area cloud shadows drift across, wrapping round at the edges.
+var _world_bounds: Rect2 = Rect2()
+
+# Follow camera: the view keeps the selected person near the middle of the map.
+var _following: bool = false
 
 
 func setup(sim: Simulation) -> void:
@@ -193,6 +215,8 @@ func _process(delta: float) -> void:
 		# Keep the point under the cursor where it is while zooming.
 		_pan += _zoom_anchor - (before * _scale + _offset)
 		_apply_view()
+	if _following:
+		_follow_step(delta)
 
 
 # --- Things the main scene tells the view to show ---------------------------
@@ -286,7 +310,55 @@ func _apply_view() -> void:
 	_offset = (_base_offset - centre) * _zoom + centre + _pan
 
 
+## Starts or stops keeping the selected person in the middle of the map.
+func toggle_follow() -> void:
+	_following = not _following and selected_id != ""
+
+
+func is_following() -> bool:
+	return _following
+
+
+## Where the selected person is on screen: their figure outdoors, the door of
+## the building they are in, or nowhere (Vector2.INF) when off the map.
+func _follow_target() -> Vector2:
+	if simulation == null or not simulation.state.people.has(selected_id):
+		return Vector2.INF
+	var person: Dictionary = simulation.state.people[selected_id]
+	if person["at"] == Records.AT_OUTSIDE or _is_walking(selected_id):
+		return _animated_position(person)
+	if person["at"] == Records.AT_INSIDE:
+		return to_screen(area.buildings[person["place_id"]]["door"])
+	return Vector2.INF
+
+
+func _follow_step(delta: float) -> void:
+	var target: Vector2 = _follow_target()
+	if target == Vector2.INF:
+		return
+	var gap: Vector2 = MAP_RECT.get_center() - target
+	if gap.length() < 0.5:
+		return
+	_pan += gap * clampf(delta * FOLLOW_EASE, 0.0, 1.0)
+	_apply_view()
+
+
+func _draw_follow_pill() -> void:
+	if not _following or not simulation.state.people.has(selected_id):
+		return
+	var person: Dictionary = simulation.state.people[selected_id]
+	var away: bool = person["at"] != Records.AT_OUTSIDE and person["at"] != Records.AT_INSIDE
+	var text: String = "Following %s%s  (F to stop)" % [person["given_name"], ", who is away" if away else ""]
+	var size: Vector2 = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12) + Vector2(26, 8)
+	# Top left of the map, where it is least likely to cover the person followed.
+	var at: Vector2 = MAP_RECT.position + Vector2(6, 6)
+	draw_style_box(_home_pill, Rect2(at, size))
+	draw_circle(at + Vector2(11, size.y / 2.0), 3.5, MUSTARD)
+	draw_string(_font, at + Vector2(19, size.y - 8.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, PAPER)
+
+
 func reset_view() -> void:
+	_following = false
 	_zoom = 1.0
 	_zoom_target = 1.0
 	_pan = Vector2.ZERO
@@ -346,6 +418,7 @@ func _plan_decoration() -> void:
 		var lot_rect: Rect2 = _rect_of(area.lots[lot_id]["boundary"])
 		everything = lot_rect if first else everything.merge(lot_rect)
 		first = false
+	_world_bounds = everything.grow(70.0 * FOOT)
 	everything = everything.grow(200.0 * FOOT)
 
 	var rng: RandomNumberGenerator = _rng_for("grass")
@@ -360,14 +433,30 @@ func _plan_decoration() -> void:
 	for building_id: String in area.sorted_building_ids():
 		footprints.append(_rect_of(area.buildings[building_id]["footprint"]))
 
+	var wash_spots: Array = []
 	for building_id: String in area.sorted_building_ids():
 		var building: Dictionary = area.buildings[building_id]
 		var door: Vector2 = Vector2(building["door"][0], building["door"][1])
 		var street: Dictionary = _nearest_street_point(door)
+		var store: bool = _is_store(building)
+		var deco_rng: RandomNumberGenerator = _rng_for(building_id + ":garden")
 		if not street.is_empty():
 			var toward: Vector2 = (street["point"] as Vector2 - door).normalized()
 			var reach: float = maxf(float(street["distance"]) - float(street["half"]), 0.0)
-			_walks.append([door, door + toward * reach])
+			var curb: Vector2 = door + toward * reach
+			_walks.append([door, curb])
+			if not store:
+				# A mailbox post on the lawn side of the sidewalk, beside the walk.
+				var beside: Vector2 = toward.orthogonal() * (1.0 if deco_rng.randf() < 0.5 else -1.0)
+				var post: Vector2 = curb - toward * 6.5 * FOOT + beside * 3.0 * FOOT
+				_mailboxes.append({"x": post.x, "y": post.y, "along": toward,
+						"paint": [Color(0.22, 0.30, 0.42), Color(0.30, 0.30, 0.32), Color(0.20, 0.36, 0.26)][deco_rng.randi_range(0, 2)]})
+				# Flower beds along both sides of some front walks.
+				if deco_rng.randf() < 0.6 and reach > 16.0 * FOOT:
+					for t: float in [0.3, 0.55]:
+						for side: float in [1.0, -1.0]:
+							var at: Vector2 = door + toward * reach * t + toward.orthogonal() * side * 3.0 * FOOT
+							_flowers.append(_flower_cluster(at, toward, deco_rng))
 		# Shrubs along the wall the door is on, leaving the door clear.
 		var rect: Rect2 = _rect_of(building["footprint"])
 		var shrub_rng: RandomNumberGenerator = _rng_for(building_id + ":shrubs")
@@ -384,6 +473,22 @@ func _plan_decoration() -> void:
 				continue
 			at += outward * 2.5 * FOOT
 			_shrubs.append({"x": at.x, "y": at.y, "size": shrub_rng.randf_range(2.2, 3.2) * FOOT, "shade": shrub_rng.randf()})
+			if not store and deco_rng.randf() < 0.55:
+				var wall: Vector2 = Vector2(1, 0) if along_x else Vector2(0, 1)
+				_flowers.append(_flower_cluster(at + outward * 2.2 * FOOT, wall, deco_rng))
+		if not store:
+			var top: Vector3 = _chimney_top(building)
+			_chimneys[building_id] = top
+			var back: Vector2 = -outward
+			var depth: float = rect.size.y if along_x else rect.size.x
+			if back.x - back.y > 0.0:  # a back yard on the viewer's side, where washing can be seen
+				wash_spots.append([building_id, rect.get_center() + back * (depth / 2.0 + 11.0 * FOOT), Vector2(back.y, back.x)])
+
+	for spot: Array in wash_spots:
+		_plan_clothesline(spot[0], spot[1], spot[2], false)
+	for spot: Array in wash_spots:
+		if not _clotheslines.is_empty() or _plan_clothesline(spot[0], spot[1], spot[2], true):
+			break
 
 	for lot_id: String in area.lots:
 		var boundary: Array = area.lots[lot_id]["boundary"]
@@ -419,6 +524,9 @@ func _plan_decoration() -> void:
 					clear = false
 			for walk: Array in _walks:
 				if Geometry2D.get_closest_point_to_segment(spot, walk[0], walk[1]).distance_to(spot) < 9.0 * FOOT:
+					clear = false
+			for line: Dictionary in _clotheslines:
+				if Geometry2D.get_closest_point_to_segment(spot, line["a"], line["b"]).distance_to(spot) < 10.0 * FOOT:
 					clear = false
 			var street_gap: Dictionary = _nearest_street_point(spot)
 			if not street_gap.is_empty() and float(street_gap["distance"]) < float(street_gap["half"]) + 9.0 * FOOT:
@@ -464,6 +572,59 @@ func _plan_decoration() -> void:
 				var spot: Vector2 = a + along * place + across * car_side * (half - 4.5 * FOOT)
 				_cars.append({"x": spot.x, "y": spot.y, "along_x": absf(along.x) >= absf(along.y),
 						"paint": CAR_PAINT[car_rng.randi_range(0, CAR_PAINT.size() - 1)]})
+
+	# Large, soft cloud shadows that drift over the street by day.
+	var cloud_rng: RandomNumberGenerator = _rng_for("clouds")
+	for cloud: int in 3:
+		var blobs: Array = []
+		for blob: int in 4:
+			blobs.append([cloud_rng.randf_range(-40.0, 40.0) * FOOT, cloud_rng.randf_range(-24.0, 24.0) * FOOT,
+					cloud_rng.randf_range(36.0, 60.0) * FOOT])
+		_clouds.append({
+			"x": cloud_rng.randf_range(_world_bounds.position.x, _world_bounds.end.x),
+			"y": cloud_rng.randf_range(_world_bounds.position.y, _world_bounds.end.y),
+			"blobs": blobs,
+		})
+
+
+## A small cluster of flowers around a point, spread along a direction.
+func _flower_cluster(at: Vector2, along: Vector2, rng: RandomNumberGenerator) -> Dictionary:
+	var dots: Array = []
+	var mixed: bool = rng.randf() < 0.4
+	var base: Color = FLOWER_COLORS[rng.randi_range(0, FLOWER_COLORS.size() - 1)]
+	var spread: Vector2 = along.normalized()
+	for index: int in rng.randi_range(4, 7):
+		var offset: Vector2 = spread * rng.randf_range(-2.4, 2.4) * FOOT + spread.orthogonal() * rng.randf_range(-0.8, 0.8) * FOOT
+		var color: Color = FLOWER_COLORS[rng.randi_range(0, FLOWER_COLORS.size() - 1)] if mixed else base
+		dots.append([offset.x, offset.y, color])
+	return {"x": at.x, "y": at.y, "dots": dots}
+
+
+## A clothesline in one or two back yards, chosen from the building's ID.
+## Returns whether one was put up.
+func _plan_clothesline(building_id: String, middle: Vector2, along: Vector2, force: bool) -> bool:
+	if _clotheslines.size() >= 2 or (not force and absi((building_id + ":washday").hash()) % 3 != 0):
+		return false
+	var a: Vector2 = middle - along * 7.0 * FOOT
+	var b: Vector2 = middle + along * 7.0 * FOOT
+	var inside: bool = false
+	for lot_id: String in area.lots:
+		var lot: PackedVector2Array = PackedVector2Array()
+		for point: Array in area.lots[lot_id]["boundary"]:
+			lot.append(Vector2(point[0], point[1]))
+		if Geometry2D.is_point_in_polygon(a, lot) and Geometry2D.is_point_in_polygon(b, lot):
+			inside = true
+	if not inside:
+		return false
+	var rng: RandomNumberGenerator = _rng_for(building_id + ":washing")
+	var items: Array = []
+	var t: float = 0.12
+	while t < 0.85:
+		var width: float = rng.randf_range(1.4, 2.6) * FOOT
+		items.append([t, width, rng.randf_range(1.4, 2.8) * FOOT, WASHING[rng.randi_range(0, WASHING.size() - 1)]])
+		t += width / (14.0 * FOOT) + rng.randf_range(0.06, 0.14)
+	_clotheslines.append({"a": a, "b": b, "items": items})
+	return true
 
 
 # --- Light -----------------------------------------------------------------
@@ -516,6 +677,7 @@ func _draw() -> void:
 	for walk: Array in _walks:
 		_draw_strip(walk[0], walk[1], 3.5 * FOOT, _tint(COLOR_PATH))
 	_draw_shadows()
+	_draw_cloud_shadows()
 	_draw_lamp_pools()
 	_layout_people()
 
@@ -533,6 +695,13 @@ func _draw() -> void:
 		drawables.append({"key": _iso(lamp["x"], lamp["y"]).y, "kind": "lamp", "item": lamp})
 	for car: Dictionary in _cars:
 		drawables.append({"key": _iso(car["x"], car["y"]).y, "kind": "car", "item": car})
+	for bed: Dictionary in _flowers:
+		drawables.append({"key": _iso(bed["x"], bed["y"]).y - 1.0, "kind": "flowers", "item": bed})
+	for mailbox: Dictionary in _mailboxes:
+		drawables.append({"key": _iso(mailbox["x"], mailbox["y"]).y, "kind": "mailbox", "item": mailbox})
+	for line: Dictionary in _clotheslines:
+		var line_middle: Vector2 = ((line["a"] as Vector2) + (line["b"] as Vector2)) / 2.0
+		drawables.append({"key": _iso(line_middle.x, line_middle.y).y, "kind": "clothesline", "item": line})
 	for fence: Array in _fences:
 		var middle: Vector2 = ((fence[0] as Vector2) + (fence[1] as Vector2)) / 2.0
 		drawables.append({"key": _iso(middle.x, middle.y).y - 2.0, "kind": "fence", "item": fence})
@@ -556,9 +725,17 @@ func _draw() -> void:
 				_draw_car(item["item"])
 			"fence":
 				_draw_fence(item["item"])
+			"flowers":
+				_draw_flowers(item["item"])
+			"mailbox":
+				_draw_mailbox(item["item"])
+			"clothesline":
+				_draw_clothesline(item["item"])
 			"person":
 				_draw_person(simulation.state.people[item["id"]], hovered.get("person", "") == item["id"])
 
+	_draw_smoke()
+	_draw_birds()
 	_draw_street_names()
 	_draw_building_badges(home_id)
 	_draw_bubbles()
@@ -567,6 +744,7 @@ func _draw() -> void:
 	_draw_house_notes()
 	_draw_floats()
 	_draw_toasts()
+	_draw_follow_pill()
 
 
 func _polygon(points: Array, lift: float = 0.0) -> PackedVector2Array:
@@ -827,6 +1005,14 @@ func _draw_wall_openings(building: Dictionary, a: Vector2, b: Vector2, lit: bool
 			_p3(p.x - along.x * FOOT, p.y - along.y * FOOT, 8.0 * FOOT), _p3(q.x + along.x * FOOT, q.y + along.y * FOOT, 8.0 * FOOT),
 			_p3(q.x + along.x * FOOT, q.y + along.y * FOOT, 9.0 * FOOT), _p3(p.x - along.x * FOOT, p.y - along.y * FOOT, 9.0 * FOOT)])
 		draw_colored_polygon(hood, frame)
+		if lit:
+			# A porch light by the door while someone is up after dark.
+			var strength: float = clampf((_night - 0.2) / 0.5, 0.0, 1.0)
+			var bulb: Vector2 = _p3(door.x, door.y, 7.6 * FOOT) + (_p3(q.x, q.y, 0) - _p3(p.x, p.y, 0)) * 0.75
+			_ellipse(_iso(door.x, door.y), 7.0 * FOOT * _scale, 0.5, Color(1.0, 0.82, 0.45, 0.14 * strength))
+			for ring: int in 3:
+				draw_circle(bulb, (7.0 - 2.0 * ring) * sqrt(_zoom), Color(1.0, 0.85, 0.45, 0.13 * strength))
+			draw_circle(bulb, maxf(1.3, 0.9 * sqrt(_zoom)), Color(1.0, 0.95, 0.70, strength))
 
 
 ## A gabled roof, ridge along the longer side. Returns the roof faces drawn.
@@ -847,9 +1033,10 @@ func _draw_gable_roof(building: Dictionary, rect: Rect2, h: float, siding: Color
 		var back: PackedVector2Array = PackedVector2Array([_p3(x0 - o, y0 - o, h - o * 0.4), _p3(x0 - o, y1 + o, h - o * 0.4), _p3(xm, y1 + o, h + rise), _p3(xm, y0 - o, h + rise)])
 		var front: PackedVector2Array = PackedVector2Array([_p3(x1 + o, y0 - o, h - o * 0.4), _p3(x1 + o, y1 + o, h - o * 0.4), _p3(xm, y1 + o, h + rise), _p3(xm, y0 - o, h + rise)])
 		_face(back, _tint(roof.darkened(0.12)), roof_edge)
-		_draw_chimney(Vector2(xm + rect.size.x * 0.18, y0 + rect.size.y * 0.65), h, rise)
 		_face(front, _tint(roof.lightened(0.08)), roof_edge)
 		_draw_shingles(front, roof)
+		# This chimney stands on the front slope, so it is drawn over it.
+		_draw_chimney(_chimneys.get(building["id"], Vector3.ZERO), h + rise * 0.6)
 		faces.append_array([gable, back, front])
 	else:
 		var ym: float = (y0 + y1) / 2.0
@@ -859,7 +1046,7 @@ func _draw_gable_roof(building: Dictionary, rect: Rect2, h: float, siding: Color
 		var back: PackedVector2Array = PackedVector2Array([_p3(x0 - o, y1 + o, h - o * 0.4), _p3(x1 + o, y1 + o, h - o * 0.4), _p3(x1 + o, ym, h + rise), _p3(x0 - o, ym, h + rise)])
 		var front: PackedVector2Array = PackedVector2Array([_p3(x0 - o, y0 - o, h - o * 0.4), _p3(x1 + o, y0 - o, h - o * 0.4), _p3(x1 + o, ym, h + rise), _p3(x0 - o, ym, h + rise)])
 		_face(back, _tint(roof.darkened(0.12)), roof_edge)
-		_draw_chimney(Vector2(x0 + rect.size.x * 0.3, ym + rect.size.y * 0.18), h, rise)
+		_draw_chimney(_chimneys.get(building["id"], Vector3.ZERO), h)
 		_face(front, _tint(roof.lightened(0.08)), roof_edge)
 		_draw_shingles(front, roof)
 		faces.append_array([gable, back, front])
@@ -888,11 +1075,22 @@ func _draw_shingles(face: PackedVector2Array, roof: Color) -> void:
 		draw_line(face[0].lerp(face[3], t), face[1].lerp(face[2], t), Color(color, 0.5), 1.0)
 
 
-func _draw_chimney(at: Vector2, h: float, rise: float) -> void:
+## Where a house's chimney stands (x, y) and how high its top is (z), in
+## world inches. It sits on the back slope of the gable roof.
+func _chimney_top(building: Dictionary) -> Vector3:
+	var rect: Rect2 = _rect_of(building["footprint"])
+	var top: float = _wall_height(building) + _roof_rise(building) + 2.0 * FOOT
+	if rect.size.y >= rect.size.x:
+		return Vector3(rect.get_center().x + rect.size.x * 0.18, rect.position.y + rect.size.y * 0.65, top)
+	return Vector3(rect.position.x + rect.size.x * 0.3, rect.get_center().y + rect.size.y * 0.18, top)
+
+
+func _draw_chimney(spot: Vector3, base: float) -> void:
+	if spot == Vector3.ZERO:
+		return
+	var at: Vector2 = Vector2(spot.x, spot.y)
 	var size: float = 1.4 * FOOT
-	# Height of the roof surface under the chimney, plus a little.
-	var base: float = h
-	var top: float = h + rise + 2.0 * FOOT
+	var top: float = spot.z
 	var brick: Color = Color(0.58, 0.30, 0.24)
 	var x0: float = at.x - size
 	var x1: float = at.x + size
@@ -1048,6 +1246,131 @@ func _draw_fence(fence: Array) -> void:
 		var p: Vector2 = a.lerp(b, at / length)
 		draw_line(_p3(p.x, p.y, 0.0), _p3(p.x, p.y, height), color, 1.0)
 		at += step
+
+
+func _draw_flowers(bed: Dictionary) -> void:
+	var x: float = bed["x"]
+	var y: float = bed["y"]
+	var radius: float = clampf(0.6 * FOOT * _scale, 1.4, 3.6)
+	var lift: Vector2 = Vector2(0, 0.6 * FOOT * _scale)
+	var leaf: Color = _tint(Color(0.26, 0.44, 0.22))
+	for dot: Array in bed["dots"]:
+		var at: Vector2 = _iso(x + float(dot[0]), y + float(dot[1]))
+		draw_circle(at, radius * 1.2, leaf)
+		draw_circle(at - lift, radius, _tint(dot[2]))
+
+
+func _draw_mailbox(mailbox: Dictionary) -> void:
+	var x: float = mailbox["x"]
+	var y: float = mailbox["y"]
+	var along: Vector2 = mailbox["along"]
+	var post: Color = _tint(Color(0.45, 0.35, 0.25))
+	draw_line(_p3(x, y, 0.0), _p3(x, y, 3.4 * FOOT), post, maxf(1.5, 0.35 * FOOT * _scale))
+	var hx: float = 0.5 * FOOT if absf(along.x) < absf(along.y) else 0.9 * FOOT
+	var hy: float = 0.9 * FOOT if absf(along.x) < absf(along.y) else 0.5 * FOOT
+	_draw_box(x - hx, y - hy, x + hx, y + hy, 3.4 * FOOT, 4.4 * FOOT, mailbox["paint"])
+	# The little red flag.
+	var flag: Vector2 = _p3(x + hx, y - hy, 4.4 * FOOT)
+	var flag_size: float = maxf(2.0, 0.7 * FOOT * _scale)
+	draw_line(flag, flag - Vector2(0, flag_size * 1.4), _tint(CHERRY), maxf(1.0, flag_size * 0.4))
+	draw_rect(Rect2(flag - Vector2(0, flag_size * 1.4), Vector2(flag_size, flag_size * 0.6)), _tint(CHERRY))
+
+
+func _draw_clothesline(line: Dictionary) -> void:
+	var a: Vector2 = line["a"]
+	var b: Vector2 = line["b"]
+	var high: float = 6.0 * FOOT
+	var sag: float = 0.7 * FOOT
+	var post: Color = _tint(Color(0.55, 0.52, 0.48))
+	var width: float = maxf(1.2, 0.3 * FOOT * _scale)
+	draw_line(_p3(a.x, a.y, 0.0), _p3(a.x, a.y, high), post, width)
+	draw_line(_p3(b.x, b.y, 0.0), _p3(b.x, b.y, high), post, width)
+	var rope: PackedVector2Array = PackedVector2Array()
+	for step: int in 9:
+		var t: float = float(step) / 8.0
+		var p: Vector2 = a.lerp(b, t)
+		rope.append(_p3(p.x, p.y, high - sag * sin(t * PI)))
+	draw_polyline(rope, _tint(Color(0.85, 0.83, 0.78)), 1.0, true)
+	var sway: float = sin(float(Time.get_ticks_msec()) / 900.0)
+	var dir: Vector2 = (b - a).normalized()
+	for item: Array in line["items"]:
+		var t: float = item[0]
+		var p: Vector2 = a.lerp(b, t)
+		var q: Vector2 = p + dir * float(item[1])
+		var tq: float = t + float(item[1]) / a.distance_to(b)
+		var top_p: float = high - sag * sin(t * PI)
+		var top_q: float = high - sag * sin(tq * PI)
+		var drop: float = item[2]
+		var swing: Vector2 = Vector2(sway * 1.2 * _scale * FOOT * 0.3, 0)
+		var cloth: PackedVector2Array = PackedVector2Array([
+			_p3(p.x, p.y, top_p), _p3(q.x, q.y, top_q),
+			_p3(q.x, q.y, top_q - drop) + swing, _p3(p.x, p.y, top_p - drop) + swing])
+		var color: Color = item[3]
+		_face(cloth, _tint(color), _tint(color.darkened(0.3)))
+
+
+## Soft grey puffs from the chimneys of houses where someone is up around
+## breakfast, dinner and supper, or the furnace is going in the early morning.
+func _draw_smoke() -> void:
+	var minute: int = simulation.clock.minute_of_day
+	var cooking: bool = false
+	for window: Vector2i in SMOKE_TIMES:
+		if minute >= window.x and minute <= window.y:
+			cooking = true
+	if not cooking:
+		return
+	var now: float = float(Time.get_ticks_msec())
+	var grey: Color = Color(0.86, 0.86, 0.85).lerp(_ambient, 0.35)
+	for building_id: String in _chimneys:
+		if not _anyone_awake(building_id):
+			continue
+		var top: Vector3 = _chimneys[building_id]
+		var mouth: Vector2 = _p3(top.x, top.y, top.z)
+		var offset: float = float(absi(building_id.hash()) % 1000) / 1000.0
+		for puff: int in 6:
+			var phase: float = fmod(now / 3200.0 + offset + float(puff) / 6.0, 1.0)
+			var rise: float = phase * 46.0 * sqrt(_zoom)
+			var drift: Vector2 = Vector2(phase * phase * 22.0 * sqrt(_zoom) + sin(now / 700.0 + float(puff)) * 2.0, -rise)
+			var radius: float = (2.5 + phase * 7.5) * sqrt(_zoom)
+			var alpha: float = 0.5 * (1.0 - phase) * clampf(phase * 6.0, 0.0, 1.0)
+			draw_circle(mouth + drift, radius, Color(grey, alpha))
+
+
+## Large, faint cloud shadows sliding across the ground by day.
+func _draw_cloud_shadows() -> void:
+	var minute: float = float(simulation.clock.minute_of_day)
+	var day: float = clampf((minute - 420.0) / 60.0, 0.0, 1.0) * clampf((1080.0 - minute) / 60.0, 0.0, 1.0)
+	if day <= 0.01:
+		return
+	var seconds: float = float(Time.get_ticks_msec()) / 1000.0
+	var travel: Vector2 = Vector2(1.0, -0.45).normalized() * 3.0 * FOOT * seconds
+	var span: Vector2 = _world_bounds.size
+	var shade: Color = Color(0.08, 0.12, 0.10, 0.06 * day)
+	for cloud: Dictionary in _clouds:
+		var x: float = _world_bounds.position.x + fposmod(float(cloud["x"]) + travel.x - _world_bounds.position.x, span.x)
+		var y: float = _world_bounds.position.y + fposmod(float(cloud["y"]) + travel.y - _world_bounds.position.y, span.y)
+		for blob: Array in cloud["blobs"]:
+			_ellipse(_iso(x + float(blob[0]), y + float(blob[1])), float(blob[2]) * _scale, 0.5, shade)
+
+
+## Now and then a few small birds cross the sky by day.
+func _draw_birds() -> void:
+	if _night > 0.3:
+		return
+	var now: int = Time.get_ticks_msec()
+	var cycle: int = now / 26000
+	var age: float = float(now % 26000) / 11000.0
+	if age > 1.0 or absi(str(cycle).hash()) % 3 == 0:
+		return
+	var key: int = absi(("birds" + str(cycle)).hash())
+	var leftward: bool = key % 2 == 0
+	var y: float = MAP_RECT.position.y + 30.0 + float(key % 110)
+	var x: float = lerpf(MAP_RECT.position.x - 20.0, MAP_RECT.end.x + 20.0, 1.0 - age if leftward else age)
+	var ink: Color = Color(INK, 0.75 * (1.0 - _night))
+	for bird: int in 1 + key % 3:
+		var at: Vector2 = Vector2(x + float(bird) * (14.0 if leftward else -14.0), y + float(bird) * 7.0 + sin(age * 9.0 + float(bird)) * 3.0)
+		var flap: float = sin(float(now) / 120.0 + float(bird) * 1.7) * 2.5
+		draw_polyline(PackedVector2Array([at + Vector2(-5, -2 - flap), at, at + Vector2(5, -2 - flap)]), ink, 1.3, true)
 
 
 # --- People ------------------------------------------------------------------
@@ -1424,6 +1747,7 @@ func _draw_interior() -> void:
 			occupants[spot] = []
 		occupants[spot].append(person)
 	var hovered_room: String = ""
+	var hovered_label: Array = []
 	for room_id: String in rects:
 		if (rects[room_id] as Rect2).has_point(_hover):
 			hovered_room = room_id
@@ -1439,24 +1763,54 @@ func _draw_interior() -> void:
 		var label_width: float = _font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
 		draw_rect(Rect2(rect.position + Vector2(3, 3), Vector2(label_width + 8, 15)), Color(PAPER, 0.85))
 		draw_string(_font, rect.position + Vector2(7, 15), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, INK)
-		var row: int = 0
 		var here: Array = occupants.get(room_id, [])
-		var spacing: float = minf(15.0, (rect.size.y - 30.0) / maxf(float(here.size()), 1.0))
-		for person: Dictionary in here:
-			var at: Vector2 = rect.position + Vector2(13, 30.0 + float(row) * spacing)
+		if here.is_empty():
+			continue
+		# As many rows as fit below the room's name; further people start a
+		# new column. Labels shorten to fit; hovering a dot shows it all.
+		var rows: int = maxi(1, int((rect.size.y - 24.0) / 15.0))
+		var columns: int = ceili(float(here.size()) / float(rows))
+		var column_width: float = (rect.size.x - 6.0) / float(columns)
+		var spacing: float = minf(15.0, (rect.size.y - 30.0) / float(mini(rows, here.size()) - 1)) if mini(rows, here.size()) > 1 else 15.0
+		for index: int in here.size():
+			var person: Dictionary = here[index]
+			var at: Vector2 = rect.position + Vector2(13.0 + float(index / rows) * column_width, 30.0 + float(index % rows) * spacing)
 			var players: bool = simulation.state.households[person["household_id"]]["player_controlled"]
 			if person["id"] == selected_id:
 				draw_circle(at, 7.5, MUSTARD)
 			draw_circle(at, 5.5, _pick(PLAYER_CLOTHES, person["id"]) if players else _pick(CLOTHES, person["id"]))
 			draw_circle(at - Vector2(0, 1.5), 2.6, COLOR_SKIN)
-			var bubble: Dictionary = _bubbles.get(person["id"], {})
-			var doing: String = (bubble.get("text", "") as String).to_lower()
-			var text: String = "%s: %s" % [person["given_name"], doing]
-			var width: float = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, int(rect.size.x) - 24, 10).x
+			var full: String = _interior_label(person)
+			if at.distance_to(_hover) < 8.0:
+				hovered_label = [at, full]
+			var room_for_text: float = column_width - 26.0
+			var text: String = _fit_text(full, room_for_text, 10)
+			if text == "":
+				text = _fit_text(person["given_name"], room_for_text, 10)
+			if text == "":
+				continue
+			var width: float = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x
 			draw_rect(Rect2(at + Vector2(8, -7), Vector2(width + 6, 13)), Color(PAPER, 0.8))
-			draw_string(_font, at + Vector2(11, 3.5), text, HORIZONTAL_ALIGNMENT_LEFT, int(rect.size.x) - 24, 10, INK)
-			row += 1
+			draw_string(_font, at + Vector2(11, 3.5), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, INK)
 	draw_string(_font, Vector2(INTERIOR_RECT.position.x + 12, INTERIOR_RECT.end.y - 9), "Click a room to send someone there", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.48, 0.40, 0.34))
+	if not hovered_label.is_empty():
+		var label_text: String = hovered_label[1]
+		var size: Vector2 = _font.get_string_size(label_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12) + Vector2(14, 8)
+		var spot: Vector2 = (hovered_label[0] as Vector2) + Vector2(10, -size.y - 8)
+		spot.x = clampf(spot.x, 4.0, VIEW_SIZE.x - size.x - 4.0)
+		draw_style_box(_pill_box, Rect2(spot, size))
+		draw_string(_font, spot + Vector2(7, size.y - 8.0), label_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+
+
+## "Name: what they are doing" for the cutaway.
+func _interior_label(person: Dictionary) -> String:
+	var doing: String = (_bubbles.get(person["id"], {}).get("text", "") as String).to_lower()
+	return person["given_name"] if doing == "" else "%s: %s" % [person["given_name"], doing]
+
+
+## The text if it fits the width; otherwise "" (the caller tries something shorter).
+func _fit_text(text: String, width: float, size: int) -> String:
+	return text if _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= width else ""
 
 
 # --- Input -------------------------------------------------------------------
@@ -1470,6 +1824,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_dragging = true
 			if _dragging:
 				_pan += motion.relative
+				_following = false
 				_apply_view()
 		Input.set_default_cursor_shape(Input.CURSOR_DRAG if _dragging else (Input.CURSOR_POINTING_HAND if not _hovered().is_empty() else Input.CURSOR_ARROW))
 		return
@@ -1481,12 +1836,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		match key.keycode:
 			KEY_LEFT, KEY_A:
 				_pan.x += step
+				_following = false
 			KEY_RIGHT, KEY_D:
 				_pan.x -= step
+				_following = false
 			KEY_UP, KEY_W:
 				_pan.y += step
+				_following = false
 			KEY_DOWN, KEY_S:
 				_pan.y -= step
+				_following = false
+			KEY_F:
+				toggle_follow()
 			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
 				_zoom_by(ZOOM_STEP, MAP_RECT.get_center())
 			KEY_MINUS, KEY_KP_SUBTRACT:

@@ -118,6 +118,7 @@ None is a confirmed decision until Derek confirms it.
 
 | ID | Proposal | Status |
 |---|---|---|
+| — | None open. | |
 
 ### Closed proposals
 
