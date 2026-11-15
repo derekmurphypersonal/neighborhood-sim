@@ -3,6 +3,7 @@ extends RefCounted
 ## Presentation only.
 
 const SimDate := preload("res://sim/clock/sim_date.gd")
+const Records := preload("res://sim/state/records.gd")
 
 
 static func given_name(sim: RefCounted, person_id: String) -> String:
@@ -67,43 +68,199 @@ static func event_time(event: Dictionary) -> String:
 
 
 static func event(sim: RefCounted, entry: Dictionary) -> String:
+	return _event(sim, entry, [], false)
+
+
+## The same sentence as event(), in BBCode for the feed: names of the
+## player's household (player_ids) in bold teal, regard changes green or red.
+static func event_rich(sim: RefCounted, entry: Dictionary, player_ids: Array) -> String:
+	return _event(sim, entry, player_ids, true)
+
+
+const RICH_TEAL: String = "#2F5D62"
+const RICH_GOOD: String = "#3E7A33"
+const RICH_BAD: String = "#B5442F"
+const RICH_EVEN: String = "#7A6658"
+
+
+static func _who(sim: RefCounted, person_id: String, player_ids: Array, rich: bool) -> String:
+	var name: String = given_name(sim, person_id)
+	if rich and player_ids.has(person_id):
+		return "[b][color=%s]%s[/color][/b]" % [RICH_TEAL, name]
+	return name
+
+
+static func _house(sim: RefCounted, entry: Dictionary, player_ids: Array, rich: bool) -> String:
+	var name: String = _household(sim, entry)
+	if rich and sim.state.households[entry["household_id"]]["player_controlled"]:
+		return "[b][color=%s]%s[/color][/b]" % [RICH_TEAL, name]
+	return name
+
+
+static func _change(amount: int, rich: bool) -> String:
+	if not rich:
+		return "%+d" % amount
+	var color: String = RICH_GOOD if amount > 0 else (RICH_BAD if amount < 0 else RICH_EVEN)
+	return "[color=%s]%+d[/color]" % [color, amount]
+
+
+static func _event(sim: RefCounted, entry: Dictionary, players: Array, rich: bool) -> String:
 	match entry["type"]:
 		"conversation":
 			var first: String = " (their first meeting)" if entry["first_meeting"] else ""
-			return "%s and %s talked for %d minutes%s. Regard: %s %+d, %s %+d." % [
-				given_name(sim, entry["a"]), given_name(sim, entry["b"]), entry["minutes"], first,
-				given_name(sim, entry["a"]), entry["a_change"], given_name(sim, entry["b"]), entry["b_change"],
+			return "%s and %s talked for %d minutes%s. Regard: %s %s, %s %s." % [
+				_who(sim, entry["a"], players, rich), _who(sim, entry["b"], players, rich), entry["minutes"], first,
+				given_name(sim, entry["a"]), _change(entry["a_change"], rich), given_name(sim, entry["b"]), _change(entry["b_change"], rich),
 			]
 		"birthday":
-			return "%s turned %d." % [given_name(sim, entry["person_id"]), entry["age"]]
+			return "%s turned %d." % [_who(sim, entry["person_id"], players, rich), entry["age"]]
 		"household_short_of_money":
-			return "The %s is short of money for %s." % [_household(sim, entry), entry["reason"]]
+			return "The %s is short of money for %s." % [_house(sim, entry, players, rich), entry["reason"]]
 		"payday":
 			var other: String = "" if entry["other_cents"] == 0 else " and %s other income" % money(entry["other_cents"])
-			return "Payday: the %s received %s in wages%s." % [_household(sim, entry), money(entry["wages_cents"]), other]
+			return "Payday: the %s received %s in wages%s." % [_house(sim, entry, players, rich), money(entry["wages_cents"]), other]
 		"rent_paid":
 			if entry["short_cents"] > 0:
-				return "Rent day: the %s paid %s and still owes %s." % [_household(sim, entry), money(entry["paid_cents"]), money(entry["short_cents"])]
-			return "Rent day: the %s paid %s." % [_household(sim, entry), money(entry["paid_cents"])]
+				return "Rent day: the %s paid %s and still owes %s." % [_house(sim, entry, players, rich), money(entry["paid_cents"]), money(entry["short_cents"])]
+			return "Rent day: the %s paid %s." % [_house(sim, entry, players, rich), money(entry["paid_cents"])]
 		"shopping":
 			if entry["meals"] < entry["wanted_meals"]:
 				return "%s could afford only %d of %d meals at the store (%s)." % [
-					given_name(sim, entry["person_id"]), entry["meals"], entry["wanted_meals"], money(entry["cost_cents"]),
+					_who(sim, entry["person_id"], players, rich), entry["meals"], entry["wanted_meals"], money(entry["cost_cents"]),
 				]
 			return "%s bought %d meals for the %s (%s)." % [
-				given_name(sim, entry["person_id"]), entry["meals"], _household(sim, entry), money(entry["cost_cents"]),
+				_who(sim, entry["person_id"], players, rich), entry["meals"], _house(sim, entry, players, rich), money(entry["cost_cents"]),
 			]
 		"empty_pantry":
-			return "The %s has nothing in the pantry: meals are thin." % _household(sim, entry)
+			return "The %s has nothing in the pantry: meals are thin." % _house(sim, entry, players, rich)
 		"missed_work":
-			return "%s missed a day's work and lost %s in wages." % [given_name(sim, entry["person_id"]), money(entry["lost_cents"])]
+			return "%s missed a day's work and lost %s in wages." % [_who(sim, entry["person_id"], players, rich), money(entry["lost_cents"])]
 		"order_failed":
 			if entry.get("reason", "") == "closed":
-				return "%s found %s closed." % [given_name(sim, entry["person_id"]), _place_name(sim, entry["place_id"])]
+				return "%s found %s closed." % [_who(sim, entry["person_id"], players, rich), _place_name(sim, entry["place_id"])]
 			return "%s could not find %s: away from the street." % [
-				given_name(sim, entry["person_id"]), given_name(sim, entry["other_id"]),
+				_who(sim, entry["person_id"], players, rich), _who(sim, entry["other_id"], players, rich),
 			]
 	return str(entry["type"])
+
+
+## Which small picture the feed shows beside an event.
+static func event_icon(entry: Dictionary) -> String:
+	match entry["type"]:
+		"conversation":
+			return "meet" if entry["first_meeting"] else "talk"
+		"birthday":
+			return "cake"
+		"payday":
+			return "coin"
+		"rent_paid":
+			return "rent"
+		"shopping":
+			return "basket"
+		"empty_pantry":
+			return "plate"
+		"missed_work":
+			return "clock"
+		"household_short_of_money":
+			return "short"
+		"order_failed":
+			return "closed" if entry.get("reason", "") == "closed" else "away"
+	return "dot"
+
+
+## How someone seems, read from their needs alone: a word and a face kind
+## ("happy", "fine", "low", "asleep"). Presentation only; nothing is stored.
+static func mood(person: Dictionary) -> Dictionary:
+	var action: Dictionary = person["action"]
+	if not action.is_empty() and action["started"] and action["kind"] == "sleep":
+		return {"word": "Asleep", "face": "asleep", "need": ""}
+	var lowest_name: String = ""
+	var lowest: int = Records.NEED_MAX + 1
+	for need_name: String in Records.NEED_NAMES:
+		if int(person["needs"][need_name]) < lowest:
+			lowest = person["needs"][need_name]
+			lowest_name = need_name
+	@warning_ignore("integer_division")
+	var percent: int = lowest * 100 / Records.NEED_MAX
+	if percent >= MOOD_CHEERFUL_PERCENT:
+		return {"word": "Cheerful", "face": "happy", "need": ""}
+	if percent >= MOOD_CONTENT_PERCENT:
+		return {"word": "Content", "face": "fine", "need": ""}
+	var word: String = MOOD_WORDS[lowest_name]
+	if percent < MOOD_VERY_PERCENT:
+		word = "Very " + word.to_lower()
+	return {"word": word, "face": "low", "need": lowest_name}
+
+
+const MOOD_CHEERFUL_PERCENT: int = 70
+const MOOD_CONTENT_PERCENT: int = 45
+const MOOD_VERY_PERCENT: int = 20
+const MOOD_WORDS: Dictionary = {"hunger": "Hungry", "rest": "Tired", "company": "Lonely", "fun": "Bored"}
+
+## Regard thresholds for the words in the neighbors list. Friend matches
+## "Make a friend" in sim/reports/week_goals.gd.
+const FRIEND_REGARD: int = 20
+const FRIENDLY_REGARD: int = 8
+const UNFRIENDLY_REGARD: int = -10
+
+
+## A word for how two people stand, from the regard each way. The lower of
+## the two decides, since a friendship needs both sides.
+static func relationship_word(met: bool, mine: int, theirs: int) -> String:
+	if not met:
+		return "Stranger"
+	var lower: int = mini(mine, theirs)
+	if lower >= FRIEND_REGARD:
+		return "Friend"
+	if lower >= FRIENDLY_REGARD:
+		return "Friendly"
+	if lower <= UNFRIENDLY_REGARD:
+		return "Unfriendly"
+	if lower < 0:
+		return "Cool"
+	return "Acquaintance"
+
+
+## The week paper's headline: the biggest thing in the week's summary, in a
+## few words. Every case reads only the summary and the goals; when nothing
+## stands out it says so.
+static func week_headline(sim: RefCounted, summary: Dictionary, goals: Array) -> String:
+	for birthday: Dictionary in summary["birthdays"]:
+		return "Happy birthday, %s!" % given_name(sim, birthday["person_id"])
+	var met_now: Dictionary = {}
+	for pair: Array in summary["first_meetings"]:
+		met_now[pair[0] + "|" + pair[1]] = true
+	var best: Dictionary = {}
+	var best_warmth: int = 0
+	for pair: Dictionary in summary["neighbors"]:
+		var warmth: int = mini(pair["member_change"], pair["other_change"])
+		if warmth > best_warmth:
+			best_warmth = warmth
+			best = pair
+	if summary["rent_short_cents"] > 0:
+		return "Rent comes up short"
+	if not best.is_empty() and best_warmth >= HEADLINE_WARMTH:
+		var names: String = "%s and %s" % [given_name(sim, best["member_id"]), given_name(sim, best["other_id"])]
+		if met_now.has(best["member_id"] + "|" + best["other_id"]):
+			return "%s hit it off" % names
+		return "%s grow closer" % names
+	if summary["thin_meal_days"] > 0:
+		return "A lean week in the pantry"
+	if (summary["first_meetings"] as Array).size() >= HEADLINE_MEETINGS:
+		return "%d new acquaintances" % (summary["first_meetings"] as Array).size()
+	var done: int = 0
+	for goal: Dictionary in goals:
+		if goal["status"] == "done":
+			done += 1
+	if not goals.is_empty() and done == goals.size():
+		return "Everything tried, everything done"
+	return "A quiet week"
+
+
+## How much both sides must have warmed to each other for a pair to make
+## the headline, and how many first meetings make news on their own.
+const HEADLINE_WARMTH: int = 10
+const HEADLINE_MEETINGS: int = 3
 
 
 ## A household's week as text for the summary sheet. The summary itself is

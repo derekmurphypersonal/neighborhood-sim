@@ -18,6 +18,9 @@ const SaveGame := preload("res://sim/io/save_game.gd")
 const SimDate := preload("res://sim/clock/sim_date.gd")
 const WeekSummary := preload("res://sim/reports/week_summary.gd")
 const WeekGoals := preload("res://sim/reports/week_goals.gd")
+const TitleScreen := preload("res://view/title_screen.gd")
+const SettingsSheet := preload("res://view/settings_sheet.gd")
+const ScreenFx := preload("res://view/screen_fx.gd")
 
 const SCENARIO: String = "fixture_street_spring_1950"
 ## Game minutes per real second for each speed setting.
@@ -38,6 +41,18 @@ const DAWN_END: int = 390
 const DUSK_START: int = 1110
 const DUSK_END: int = 1230
 const SILENT_DB: float = -80.0
+## Player settings (presentation only), kept between runs on this computer.
+const SETTINGS_PATH: String = "user://settings.cfg"
+const DEFAULT_SETTINGS: Dictionary = {
+	"music_volume": 1.0, "sound_volume": 1.0, "fullscreen": false, "music_on": true, "sound_on": true,
+}
+const MUSIC_BUS: String = "Music"
+const SOUNDS_BUS: String = "Sounds"
+const WINDOW_TITLE: String = "The Neighborhood (working title)"
+const MIN_WINDOW_SIZE: Vector2i = Vector2i(960, 540)
+## Fades between the title and the game, in real seconds.
+const FADE_OUT_SECONDS: float = 0.45
+const FADE_IN_SECONDS: float = 0.7
 ## Indoor activities not worth a note over the house.
 const QUIET_INDOORS: Array[String] = ["At home", "Deciding what to do", "Heading home"]
 
@@ -76,20 +91,22 @@ var _goals_week: int = -1
 var _goal_status: Dictionary = {}
 ## The speed to go back to when a sheet is closed.
 var _speed_before_sheet: int = -1
+## The day last announced with the ribbon at the top of the map.
+var _banner_day: int = -1
+## A new game shows its first day's ribbon once the welcome card is closed.
+var _first_day_banner: bool = false
+
+var _checking: bool = false
+var _settings: Dictionary = DEFAULT_SETTINGS.duplicate()
+var _fx: ScreenFx
+var _title: TitleScreen
+var _settings_sheet: SettingsSheet
+var _fader: ColorRect
+## True while a fade between the title and the game is running.
+var _busy: bool = false
 
 
 func _ready() -> void:
-	var world: Dictionary = WorldLoader.load_world(SCENARIO)
-	if not world["errors"].is_empty():
-		var message: Label = Label.new()
-		message.text = "Could not load the scenario:\n" + "\n".join(world["errors"])
-		add_child(message)
-		set_process(false)
-		return
-	_layer = CanvasLayer.new()
-	add_child(_layer)
-	_show_simulation(Simulation.new_game(world, int(world["scenario"].get("default_seed", 1))))
-
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	for i: int in args.size() - 1:
 		if args[i] == "--screenshot":
@@ -100,20 +117,83 @@ func _ready() -> void:
 			_screenshot_zoom = args[i + 1].to_float()
 		if args[i] == "--minutes" and args[i + 1].is_valid_int():
 			_screenshot_minutes = args[i + 1].to_int()
+	_checking = args.has("--self-check")
+	var trial: bool = _checking or _screenshot_path != ""
+
+	get_window().title = WINDOW_TITLE
+	get_window().min_size = MIN_WINDOW_SIZE
+	_layer = CanvasLayer.new()
+	add_child(_layer)
+	_fx = ScreenFx.new()
+	_layer.add_child(_fx)
+	_build_front_layers()
+	# The self-check and screenshots neither read nor write the player's
+	# settings, so they behave the same on every computer.
+	if not trial:
+		_load_settings()
+		_apply_window_settings()
 
 	if _screenshot_path != "":
+		if _screenshot_sheet == "title":
+			_show_title(false)
+		elif not _start_new_game():
+			return
 		_take_screenshot()
 		return
-	var checking: bool = args.has("--self-check")
-	_setup_audio(not checking)
-	if checking:
+	_setup_audio(not _checking)
+	if _checking:
 		sound_on = false  # the check confirms the audio loads; it does not play it
-		_self_check()
+		if _start_new_game():
+			_self_check()
 	else:
-		_show_welcome()
+		_show_title(true)
+
+
+## The title screen and the settings sheet sit above the game; the fader
+## above everything.
+func _build_front_layers() -> void:
+	var front: CanvasLayer = CanvasLayer.new()
+	front.layer = 10
+	add_child(front)
+	_title = TitleScreen.new()
+	_title.visible = false
+	_title.new_game_requested.connect(_on_new_game)
+	_title.continue_requested.connect(_on_continue)
+	_title.settings_requested.connect(_open_settings)
+	_title.quit_requested.connect(func() -> void: get_tree().quit())
+	front.add_child(_title)
+	_settings_sheet = SettingsSheet.new()
+	_settings_sheet.changed.connect(_on_settings_changed)
+	front.add_child(_settings_sheet)
+
+	var fade_layer: CanvasLayer = CanvasLayer.new()
+	fade_layer.layer = 100
+	add_child(fade_layer)
+	_fader = ColorRect.new()
+	_fader.color = Color(0.03, 0.03, 0.05, 0.0)
+	_fader.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fader.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fade_layer.add_child(_fader)
+
+
+## Makes a new game from the scenario and puts it on screen. Returns false
+## (and says why on screen) if the scenario cannot be loaded.
+func _start_new_game() -> bool:
+	var world: Dictionary = WorldLoader.load_world(SCENARIO)
+	if not world["errors"].is_empty():
+		var message: Label = Label.new()
+		message.text = "Could not load the scenario:\n" + "\n".join(world["errors"])
+		_layer.add_child(message)
+		set_process(false)
+		return false
+	_show_simulation(Simulation.new_game(world, int(world["scenario"].get("default_seed", 1))))
+	speed_index = 1
+	return true
 
 
 func _process(delta: float) -> void:
+	if world_view == null:
+		return
 	_pending_minutes += delta * SPEEDS[speed_index]
 	var ticks: int = mini(int(_pending_minutes), MAX_TICKS_PER_FRAME)
 	if ticks > 0:
@@ -125,32 +205,49 @@ func _process(delta: float) -> void:
 		if week_now != _week_start:
 			_show_week(_week_start, "The week that was")
 			_week_start = week_now
+		if simulation.clock.day_index != _banner_day:
+			_banner_day = simulation.clock.day_index
+			_fx.show_day(_banner_day)
 	# How far into the current minute we are, for smooth walking.
 	world_view.minute_fraction = clampf(_pending_minutes, 0.0, 1.0) if SPEEDS[speed_index] > 0 else 1.0
 	world_view.selected_id = selected_id
 	world_view.queue_redraw()
 	hud.refresh(selected_id, speed_index, music_on, sound_on)
+	_fx.set_paused(speed_index == 0)
 	_mix_ambience()
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
-	if event.is_pressed() and event is InputEventKey:
-		match (event as InputEventKey).keycode:
-			KEY_SPACE:
-				speed_index = 0 if speed_index != 0 else 1
-			KEY_1:
-				speed_index = 1
-			KEY_2:
-				speed_index = 2
-			KEY_3:
-				speed_index = 3
-			KEY_M:
-				_set_music(not music_on)
-			KEY_ESCAPE:
-				if hud.sheet_is_open():
-					hud.close_sheet()
-				else:
-					_show_menu()
+	if not event.is_pressed() or not event is InputEventKey or event.is_echo():
+		return
+	var key: Key = (event as InputEventKey).keycode
+	if key == KEY_F11:
+		_set_fullscreen(not bool(_settings["fullscreen"]))
+		return
+	if _settings_sheet.is_open():
+		if key == KEY_ESCAPE:
+			_settings_sheet.close()
+		return
+	if world_view == null or _busy:
+		return
+	match key:
+		KEY_SPACE:
+			speed_index = 0 if speed_index != 0 else 1
+		KEY_1:
+			speed_index = 1
+		KEY_2:
+			speed_index = 2
+		KEY_3:
+			speed_index = 3
+		KEY_M:
+			_set_music(not music_on)
+		KEY_N:
+			_set_sound(not sound_on)
+		KEY_ESCAPE:
+			if hud.sheet_is_open():
+				hud.close_sheet()
+			else:
+				_show_menu()
 
 
 ## Puts a simulation on screen: a new game, or one loaded from a save.
@@ -170,6 +267,7 @@ func _show_simulation(shown: Simulation) -> void:
 	_week_start = WeekSummary.week_start(simulation.clock.day_index)
 	_goals_week = -1
 	_goal_status.clear()
+	_banner_day = simulation.clock.day_index
 
 	world_view = WorldView.new()
 	world_view.setup(simulation)
@@ -199,7 +297,9 @@ func _show_menu(note: String = "") -> void:
 	var lines: Array[String] = [
 		"The game is paused.", "",
 		"[b]Save game[/b] keeps the game exactly as it is now, in one saved game that is replaced each time.",
-		"[b]Load game[/b] goes back to the saved game. Anything since then is lost.", "",
+		"[b]Load game[/b] goes back to the saved game. Anything since then is lost.",
+		"[b]Settings[/b] sets the music and sound volume, and full screen.",
+		"[b]Main menu[/b] leaves this game for the title screen.", "",
 	]
 	var saved: Dictionary = SaveGame.read_file(save_path)
 	if saved["ok"]:
@@ -216,7 +316,9 @@ func _show_menu(note: String = "") -> void:
 	if note != "":
 		lines.append("")
 		lines.append("[color=#ffeb8c]%s[/color]" % note)
-	_open_sheet("Menu", "\n".join(lines), [["Save game", _save_game], ["Load game", _load_game]], "Resume")
+	_open_sheet("Menu", "\n".join(lines), [
+		["Save game", _save_game], ["Load game", _load_game], ["Settings", _open_settings], ["Main menu", _confirm_main_menu],
+	], "Resume")
 
 
 ## Saves the game. Returns "" or the reason it could not be saved.
@@ -250,18 +352,194 @@ func _load_game() -> String:
 # --- Sheets ------------------------------------------------------------------
 
 ## Opens a sheet over the game and stops the clock while it is read.
-func _open_sheet(title: String, text: String, actions: Array = [], close_label: String = "Continue") -> void:
+func _open_sheet(title: String, text: String, actions: Array = [], close_label: String = "Continue", content: Control = null) -> void:
 	if _speed_before_sheet < 0:
 		_speed_before_sheet = speed_index
 	speed_index = 0
 	_pending_minutes = 0.0
-	hud.show_sheet(title, text, actions, close_label)
+	hud.show_sheet(title, text, actions, close_label, content)
 
 
 func _on_sheet_closed() -> void:
 	if _speed_before_sheet >= 0:
 		speed_index = _speed_before_sheet
 	_speed_before_sheet = -1
+	if _first_day_banner and world_view != null:
+		_first_day_banner = false
+		_fx.show_day(simulation.clock.day_index, "THE WEEK BEGINS")
+
+
+# --- Title screen, settings and fades ----------------------------------------
+
+## Shows the title screen. The game, if any, has already been put away.
+func _show_title(fade_in: bool) -> void:
+	_title.visible = true
+	_title.show_note("")
+	_title.set_can_continue(FileAccess.file_exists(save_path), _saved_game_detail())
+	_title.play_intro()
+	if fade_in:
+		_fader.color.a = 1.0
+		_fade_to(0.0, FADE_IN_SECONDS * 1.4)
+
+
+## "Saved Tuesday 4 April 1950, 7:30 am", or "" if there is no readable save.
+func _saved_game_detail() -> String:
+	var saved: Dictionary = SaveGame.read_file(save_path)
+	if not saved["ok"]:
+		return ""
+	var parsed: Dictionary = SaveGame.parse(saved["text"])
+	if not parsed["ok"]:
+		return "The saved game cannot be read."
+	var clock: Dictionary = parsed["document"]["simulation"]["clock"]
+	return "Saved game: %s %s, %s" % [
+		SimDate.weekday_name(clock["day_index"]), SimDate.to_iso(clock["day_index"]), Describe.clock_time(clock["minute_of_day"]),
+	]
+
+
+func _fade_to(alpha: float, seconds: float) -> void:
+	var tween: Tween = create_tween()
+	tween.tween_property(_fader, "color:a", alpha, seconds).set_trans(Tween.TRANS_SINE)
+	await tween.finished
+
+
+func _on_new_game() -> void:
+	if _busy:
+		return
+	_busy = true
+	await _fade_to(1.0, FADE_OUT_SECONDS)
+	if _start_new_game():
+		_title.visible = false
+		_first_day_banner = true
+		_show_welcome()
+	await _fade_to(0.0, FADE_IN_SECONDS)
+	_busy = false
+
+
+## Continue from the title: loads the saved game and starts it paused.
+func _on_continue() -> void:
+	if _busy:
+		return
+	var saved: Dictionary = SaveGame.read_file(save_path)
+	if not saved["ok"]:
+		_title.show_note("There is no saved game to continue.")
+		return
+	var restored: Dictionary = SaveGame.restore(saved["text"], WorldLoader.load_world(SCENARIO))
+	if not restored["ok"]:
+		_title.show_note("The saved game could not be loaded: %s" % restored["error"])
+		return
+	_busy = true
+	await _fade_to(1.0, FADE_OUT_SECONDS)
+	_show_simulation(restored["simulation"])
+	speed_index = 0
+	_title.visible = false
+	_fx.show_day(simulation.clock.day_index, "WELCOME BACK")
+	world_view.add_toast("Game loaded and paused. Press Space to carry on.")
+	if not (restored["changed_data"] as Array).is_empty():
+		world_view.add_toast("The game's data files have changed since it was saved, so it may not play out as it would have.")
+	await _fade_to(0.0, FADE_IN_SECONDS)
+	_busy = false
+
+
+func _confirm_main_menu() -> void:
+	_open_sheet("Leave for the main menu?", "\n".join([
+		"This game will be closed and you will go back to the title screen.", "",
+		"[color=#ffeb8c]Anything since you last saved will be lost.[/color] Use [b]Save game[/b] in the menu first to keep it.",
+	]), [["Leave without saving", _go_to_title], ["Back to the menu", _show_menu]], "Keep playing")
+
+
+func _go_to_title() -> void:
+	if _busy:
+		return
+	_busy = true
+	await _fade_to(1.0, FADE_OUT_SECONDS)
+	_close_game()
+	_show_title(false)
+	await _fade_to(0.0, FADE_IN_SECONDS)
+	_busy = false
+
+
+## Puts the game away: the street and the panels go; the music carries on.
+func _close_game() -> void:
+	if hud != null:
+		hud.close_sheet()
+		hud.queue_free()
+	if world_view != null:
+		world_view.queue_free()
+	hud = null
+	world_view = null
+	simulation = null
+	_first_day_banner = false
+	_fx.set_paused(false)
+	for player: AudioStreamPlayer in [_ambience_day, _ambience_night]:
+		if player != null:
+			player.volume_db = SILENT_DB
+
+
+func _open_settings() -> void:
+	_settings["music_on"] = music_on
+	_settings["sound_on"] = sound_on
+	_settings_sheet.open(_settings)
+
+
+func _on_settings_changed(changed: Dictionary) -> void:
+	var music_was_audible: bool = float(_settings["music_volume"]) > 0.0
+	var sounds_were_audible: bool = float(_settings["sound_volume"]) > 0.0
+	_settings["music_volume"] = changed["music_volume"]
+	_settings["sound_volume"] = changed["sound_volume"]
+	# Turning a volume right down is the same as switching it off, and
+	# turning it back up switches it on again, so the top-bar buttons agree.
+	var music_audible: bool = float(_settings["music_volume"]) > 0.0
+	var sounds_audible: bool = float(_settings["sound_volume"]) > 0.0
+	if music_audible != music_was_audible:
+		_set_music(music_audible)
+	if sounds_audible != sounds_were_audible:
+		_set_sound(sounds_audible)
+	_apply_volumes()
+	if bool(changed["fullscreen"]) != bool(_settings["fullscreen"]):
+		_set_fullscreen(bool(changed["fullscreen"]))
+	_save_settings()
+
+
+func _set_fullscreen(on: bool) -> void:
+	_settings["fullscreen"] = on
+	_settings_sheet.show_fullscreen(on)
+	_apply_window_settings()
+	_save_settings()
+
+
+func _apply_window_settings() -> void:
+	if _checking or _screenshot_path != "":
+		return
+	var want: DisplayServer.WindowMode = DisplayServer.WINDOW_MODE_FULLSCREEN if _settings["fullscreen"] else DisplayServer.WINDOW_MODE_WINDOWED
+	if DisplayServer.window_get_mode() != want:
+		DisplayServer.window_set_mode(want)
+
+
+func _load_settings() -> void:
+	var file: ConfigFile = ConfigFile.new()
+	if file.load(SETTINGS_PATH) != OK:
+		return
+	for key: String in DEFAULT_SETTINGS:
+		var value: Variant = file.get_value("settings", key, DEFAULT_SETTINGS[key])
+		if typeof(value) == typeof(DEFAULT_SETTINGS[key]):
+			_settings[key] = value
+	_settings["music_volume"] = clampf(_settings["music_volume"], 0.0, 1.0)
+	_settings["sound_volume"] = clampf(_settings["sound_volume"], 0.0, 1.0)
+	music_on = _settings["music_on"]
+	sound_on = _settings["sound_on"]
+
+
+## Writes the settings to the per-user folder. Never during the self-check
+## or a screenshot run, so those leave the computer untouched.
+func _save_settings() -> void:
+	if _checking or _screenshot_path != "":
+		return
+	_settings["music_on"] = music_on
+	_settings["sound_on"] = sound_on
+	var file: ConfigFile = ConfigFile.new()
+	for key: String in _settings:
+		file.set_value("settings", key, _settings[key])
+	file.save(SETTINGS_PATH)
 
 
 ## What is known about a building: documented exterior, fictional interior
@@ -276,7 +554,8 @@ func _show_week(first_day: int, title: String) -> void:
 	var household_id: String = simulation.state.player_household_id()
 	var summary: Dictionary = WeekSummary.summarize(simulation.state, household_id, first_day, first_day + 6)
 	var goals: Array = WeekGoals.evaluate(simulation.state, household_id, first_day, first_day + 6, simulation.clock.day_index)
-	_open_sheet("%s: the %s" % [title, simulation.state.households[household_id]["name"]], Describe.week_summary(simulation, summary, goals))
+	_open_sheet("%s: the %s" % [title, simulation.state.households[household_id]["name"]], Describe.week_summary(simulation, summary, goals),
+			[], "Continue", hud.week_paper(summary, goals))
 
 
 # --- Selecting and ordering --------------------------------------------------
@@ -425,15 +704,19 @@ func _announce_event(event: Dictionary) -> void:
 ## Loads every sound. Only when start_playing is true do the music and the
 ## ambience start; the self-check loads them without playing anything.
 func _setup_audio(start_playing: bool) -> void:
-	_music = _player(MUSIC_FILE, MUSIC_VOLUME_DB)
-	_chime_talk = _player("chime_talk.ogg", CHIME_VOLUME_DB)
-	_chime_notice = _player("chime_notice.ogg", CHIME_VOLUME_DB)
-	_ambience_day = _player(AMBIENCE_DAY_FILE, SILENT_DB)
-	_ambience_night = _player(AMBIENCE_NIGHT_FILE, SILENT_DB)
+	_make_bus(MUSIC_BUS)
+	_make_bus(SOUNDS_BUS)
+	_music = _player(MUSIC_FILE, MUSIC_VOLUME_DB, MUSIC_BUS)
+	_chime_talk = _player("chime_talk.ogg", CHIME_VOLUME_DB, SOUNDS_BUS)
+	_chime_notice = _player("chime_notice.ogg", CHIME_VOLUME_DB, SOUNDS_BUS)
+	_ambience_day = _player(AMBIENCE_DAY_FILE, SILENT_DB, SOUNDS_BUS)
+	_ambience_night = _player(AMBIENCE_NIGHT_FILE, SILENT_DB, SOUNDS_BUS)
+	_apply_volumes()
 	if _music != null:
 		(_music.stream as AudioStreamOggVorbis).loop = true
 		if start_playing:
 			_music.play()
+			_music.stream_paused = not music_on
 	else:
 		music_on = false
 	for player: AudioStreamPlayer in [_ambience_day, _ambience_night]:
@@ -441,13 +724,35 @@ func _setup_audio(start_playing: bool) -> void:
 			(player.stream as AudioStreamOggVorbis).loop = true
 			if start_playing:
 				player.play()
+				player.stream_paused = not sound_on
 	if start_playing:
 		_mix_ambience()
 
 
+## Music and the other sounds each go through their own bus, so the settings
+## sheet can set their volumes without touching the mix between them.
+func _make_bus(bus_name: String) -> void:
+	if AudioServer.get_bus_index(bus_name) != -1:
+		return
+	AudioServer.add_bus()
+	var index: int = AudioServer.bus_count - 1
+	AudioServer.set_bus_name(index, bus_name)
+	AudioServer.set_bus_send(index, "Master")
+
+
+func _apply_volumes() -> void:
+	for entry: Array in [[MUSIC_BUS, float(_settings["music_volume"])], [SOUNDS_BUS, float(_settings["sound_volume"])]]:
+		var index: int = AudioServer.get_bus_index(entry[0])
+		if index == -1:
+			continue
+		var level: float = entry[1]
+		AudioServer.set_bus_mute(index, level <= 0.0)
+		AudioServer.set_bus_volume_db(index, linear_to_db(maxf(level, 0.001)))
+
+
 ## Loads a sound straight from the project folder, so no editor import step
 ## is needed. Returns null if the file is missing or unreadable.
-func _player(file_name: String, volume_db: float) -> AudioStreamPlayer:
+func _player(file_name: String, volume_db: float, bus_name: String) -> AudioStreamPlayer:
 	var path: String = ProjectSettings.globalize_path("res://audio/" + file_name)
 	if not FileAccess.file_exists(path):
 		return null
@@ -457,27 +762,37 @@ func _player(file_name: String, volume_db: float) -> AudioStreamPlayer:
 	var player: AudioStreamPlayer = AudioStreamPlayer.new()
 	player.stream = stream
 	player.volume_db = volume_db
+	player.bus = bus_name
 	add_child(player)
 	return player
 
 
 func _set_music(on: bool) -> void:
 	music_on = on and _music != null
+	if music_on and float(_settings["music_volume"]) <= 0.0:
+		# Switching on music that was turned right down brings it back up.
+		_settings["music_volume"] = 0.5
+		_apply_volumes()
 	if _music != null:
 		_music.stream_paused = not music_on
 		if music_on and not _music.playing:
 			_music.play()
+	_save_settings()
 
 
 ## One toggle covers the chimes and the ambience; the music has its own.
 func _set_sound(on: bool) -> void:
 	sound_on = on
+	if on and float(_settings["sound_volume"]) <= 0.0:
+		_settings["sound_volume"] = 0.5
+		_apply_volumes()
 	for player: AudioStreamPlayer in [_ambience_day, _ambience_night]:
 		if player != null:
 			player.stream_paused = not on
 			if on and not player.playing:
 				player.play()
 	_mix_ambience()
+	_save_settings()
 
 
 ## How much of the day bed (rather than the night crickets) to hear at a time
@@ -590,10 +905,55 @@ func _self_check() -> void:
 	DirAccess.remove_absolute(save_path.get_base_dir())
 	if _last_activity.size() != simulation.state.people.size():  # one per resident
 		problems.append("not everyone has an activity bubble")
+	await _check_front_screens(problems)
 	for problem: String in problems:
 		print("SELF-CHECK  PROBLEM: " + problem)
 	print("SELF-CHECK  %s" % ("passed" if problems.is_empty() else "FAILED"))
 	get_tree().quit(0 if problems.is_empty() else 1)
+
+
+## Part of the self-check: the settings sheet changes the volume live, the
+## game can go back to the title and start again, and none of it writes the
+## settings file.
+func _check_front_screens(problems: Array[String]) -> void:
+	var settings_file: String = ProjectSettings.globalize_path(SETTINGS_PATH)
+	var file_before: int = FileAccess.get_modified_time(settings_file) if FileAccess.file_exists(settings_file) else -1
+	_show_menu()
+	_open_settings()
+	if not _settings_sheet.is_open():
+		problems.append("the settings sheet did not open")
+	_settings_sheet.set_music_percent(40)
+	var bus: int = AudioServer.get_bus_index(MUSIC_BUS)
+	if bus == -1 or not is_equal_approx(AudioServer.get_bus_volume_db(bus), linear_to_db(0.4)):
+		problems.append("the music volume slider did not reach the music bus")
+	elif _music == null or _music.bus != MUSIC_BUS or _chime_notice == null or _chime_notice.bus != SOUNDS_BUS:
+		problems.append("the sounds are not routed through the Music and Sounds buses")
+	else:
+		print("SELF-CHECK  settings sheet opened; music volume 40%% is %.1f dB on the Music bus" % AudioServer.get_bus_volume_db(bus))
+	_settings_sheet.close()
+	if not hud.sheet_is_open():
+		problems.append("closing the settings sheet also closed the menu under it")
+
+	await _go_to_title()
+	if world_view != null or hud != null or not _title.visible:
+		problems.append("Main menu did not return to the title screen")
+	elif _title.button_count() != 4:
+		problems.append("the title screen has %d buttons, expected 4" % _title.button_count())
+	else:
+		print("SELF-CHECK  returned to the title screen; Continue is %s" % ("enabled" if FileAccess.file_exists(save_path) else "disabled (no saved game)"))
+	_open_settings()
+	_settings_sheet.close()
+	await _on_new_game()
+	if world_view == null or _title.visible or not hud.sheet_is_open():
+		problems.append("New game from the title did not start a game with the welcome card")
+	else:
+		print("SELF-CHECK  started a new game from the title; the welcome card is open")
+	hud.close_sheet()
+	var file_after: int = FileAccess.get_modified_time(settings_file) if FileAccess.file_exists(settings_file) else -1
+	if file_after != file_before:
+		problems.append("the self-check wrote the settings file")
+	else:
+		print("SELF-CHECK  the settings file was not written")
 
 
 ## Opens the sheet asked for with "--show <name>" before a screenshot.
@@ -609,6 +969,15 @@ func _show_for_screenshot() -> void:
 			_show_week(WeekSummary.week_start(simulation.clock.day_index - 1), "The week that was")
 		"welcome":
 			_show_welcome()
+		"settings":
+			_open_settings()
+		"paused":
+			speed_index = 0
+			_fx.set_paused(true)
+		"banner":
+			_fx.show_day(simulation.clock.day_index)
+		"leave":
+			_confirm_main_menu()
 
 
 ## A short welcome at the start of a new game: what this is, and the controls.
@@ -624,7 +993,8 @@ func _show_welcome() -> void:
 		"Right-click any building to read about it.[/ul]",
 		"",
 		"[b]Keys[/b]",
-		"  [b]Space[/b] pause      [b]1 2 3[/b] speed      [b]Esc[/b] menu      [b]M[/b] music",
+		"  [b]Space[/b] pause      [b]1 2 3[/b] speed      [b]Esc[/b] menu and settings",
+		"  [b]M[/b] music on or off      [b]N[/b] sounds on or off      [b]F11[/b] full screen",
 		"  [b]Scroll[/b] zoom      [b]Drag[/b] or [b]arrows[/b] look around      [b]R[/b] reset the view",
 		"  [b]F[/b] follow the selected person",
 	]
@@ -634,6 +1004,12 @@ func _show_welcome() -> void:
 ## Development aid: run some minutes, save a picture of the screen, and quit.
 func _take_screenshot() -> void:
 	set_process(false)
+	if _screenshot_sheet == "title":
+		await get_tree().create_timer(1.6).timeout  # let the title fade in
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(_screenshot_path)
+		get_tree().quit()
+		return
 	simulation.advance_minutes(maxi(_screenshot_minutes - 3, 0))
 	_watch(false)
 	for i: int in mini(_screenshot_minutes, 3):

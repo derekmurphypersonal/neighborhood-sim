@@ -1,6 +1,6 @@
 # Handoff
 
-Last updated: 2026-11-15, by Claude (Opus 5.5), after the second M1-P round.
+Last updated: 2026-11-15, by Claude (Opus 5.5), after the third M1-P round.
 
 This file says what is in progress and what is next. Settled matters are in [DECISIONS.md](../DECISIONS.md) and [ROADMAP.md](ROADMAP.md) and are not repeated here. Read `DECISIONS.md` first, then this.
 
@@ -33,13 +33,26 @@ Observations from this round, not acted on:
 - For a household with Saturday shifts, "A full week's work" could show done on Friday and then missed, because a Saturday absence is logged on Sunday. The player's household works weekdays only.
 - Godot's `.uid` files and the older `.ogg.import` files are untracked in the cloud copy and have never been committed; the new ones were left uncommitted the same way.
 
+### Third round (Derek: "keep making it more polished")
+
+Three subagents worked in parallel and were all cut off by a usage limit before reporting. Their work was recovered from the working tree, one parse error fixed (`near` declared twice in `world_view.gd`), and everything checked as below before committing.
+
+- **Title screen** painted in code (New game, Continue, Settings, Quit), fade into the game, "Main menu" and "Settings" in the in-game menu.
+- **Settings**: music and sound volume (Music and Sounds buses), full screen, kept in `user://settings.cfg`; N toggles sounds. Window letterboxes at 1280×720 and allows HiDPI.
+- **Interface**: portrait and mood for the selected person, need icons with smooth bars, a this-week money ledger, neighbors sorted by warmth with a relationship word and two-way regard bars, feed icons and coloured regard changes, a "paused" pill and dimmed street, a new-day ribbon, sheet open/close animations.
+- **Week summary** as "The Fixture Street Weekly", with a headline, money chart, closest pairs and goal results; it says the street is made up.
+- **Goals**: a pool of fourteen, seven shown each week, chosen from the week's first day.
+- **Street**: porches, dormers, bay windows, shutters, curtains, a striped store awning and bench, utility poles and wires, hydrants, garbage cans, a bicycle and wagon, blossoming trees, tulips, mowed stripes, more varied people (hats, builds, children with toys, sitting out on chairs), a vignette and hazy distance.
+
+Not known: whether each agent finished every item on its list (for example a minimum window size and window title). Anything missing will show up on the next pass.
+
 ## 3. Test status
 
-Run in the cloud on Linux, Godot 4.7.2 stable, after the second round:
+Run in the cloud on Linux, Godot 4.7.2 stable, after the third round (also: a normal launch through the title screen for 600 frames, no script errors):
 
 | Command | Result |
 |---|---|
-| `godot --headless --path game --script res://tests/run_tests.gd` | `109 tests, 2071 checks, 0 failed` |
+| `godot --headless --path game --script res://tests/run_tests.gd` | `112 tests, 2246 checks, 0 failed` |
 | `godot --headless --path game --script res://tools/validate_data.gd` | `Data validation: 0 error(s).` |
 | `godot --path game -- --self-check` (virtual display) | `SELF-CHECK  passed` |
 | `godot --headless --path game --script res://tools/playtest_week.gd` | hash `109ad66bc899bdf3db4356d62c3913b40abf64999e34050c683832868f176911` (unchanged) |

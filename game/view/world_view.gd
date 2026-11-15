@@ -108,6 +108,26 @@ const HAIR: Array[Color] = [
 const CAR_PAINT: Array[Color] = [
 	Color(0.55, 0.78, 0.74), Color(0.86, 0.52, 0.46), Color(0.92, 0.86, 0.60), Color(0.50, 0.60, 0.78),
 ]
+## Shutters are dark so they stand out against the pale siding.
+const SHUTTERS: Array[Color] = [
+	Color(0.18, 0.32, 0.25), Color(0.20, 0.25, 0.34), Color(0.46, 0.20, 0.18), Color(0.17, 0.17, 0.18), Color(0.28, 0.38, 0.40),
+]
+const CURTAINS: Array[Color] = [
+	Color(0.98, 0.96, 0.90), Color(0.97, 0.84, 0.84), Color(0.98, 0.92, 0.70), Color(0.84, 0.92, 0.88),
+]
+const HATS: Array[Color] = [
+	Color(0.36, 0.28, 0.22), Color(0.40, 0.40, 0.43), Color(0.22, 0.25, 0.34), Color(0.86, 0.78, 0.56), Color(0.58, 0.26, 0.28),
+]
+const BLOSSOMS: Array[Color] = [Color(0.97, 0.76, 0.84), Color(0.99, 0.95, 0.95)]
+const TULIPS: Array[Color] = [
+	Color(0.88, 0.16, 0.20), Color(0.99, 0.80, 0.18), Color(0.96, 0.46, 0.62), Color(0.99, 0.97, 0.93),
+]
+const BIKE_PAINT: Array[Color] = [Color(0.72, 0.18, 0.16), Color(0.20, 0.38, 0.64), Color(0.20, 0.46, 0.30)]
+const COLOR_HAZE: Color = Color(0.77, 0.82, 0.74)
+const COLOR_CONCRETE: Color = Color(0.74, 0.72, 0.67)
+const COLOR_WIRE: Color = Color(0.16, 0.15, 0.14)
+const PORCH_DEPTH: float = 7.0 * FOOT
+const POLE_HEIGHT: float = 25.0 * FOOT
 
 var simulation: Simulation
 var area: Area
@@ -168,6 +188,26 @@ var _chimneys: Dictionary = {}
 var _clouds: Array = []     # {"x", "y", "blobs": [[dx, dy, radius], ...]}
 ## The area cloud shadows drift across, wrapping round at the edges.
 var _world_bounds: Rect2 = Rect2()
+## All lots together; the world fades into haze beyond them.
+var _lot_bounds: Rect2 = Rect2()
+## building_id -> {"out", "along_x", "shutter", "curtain", "cafe", "porch",
+## "dormer", "bay", "bay_wall", "bay_u", "awning_wall", "flicker"}
+var _styles: Dictionary = {}
+var _patches: Array = []    # {"x", "y", "r", "color"}: soft blotches in the grass
+var _stripes: Array = []    # [Vector2 corner, Vector2 opposite corner]: mowing stripes
+var _poles: Array = []      # {"x", "y", "across", "transformer"}
+var _wires: Array = []      # {"a", "b" (world Vector2), "across", "t0", "t1"}: pieces of a span
+var _hydrants: Array = []   # {"x", "y"}
+var _drains: Array = []     # {"x", "y", "along", "inward"}
+var _cans: Array = []       # {"x", "y"}
+var _bicycles: Array = []   # {"x", "y", "along", "lean", "paint"}
+var _wagons: Array = []     # {"x", "y", "along"}
+var _tulips: Array = []     # {"a", "b", "colors"}
+var _glints: Array = []     # {"x", "y", "phase"}: lamplight catching the street at night
+var _golden: float = 0.0
+var _spring: bool = false
+var _selected_seen: String = ""
+var _selected_since: int = -100000
 
 # Follow camera: the view keeps the selected person near the middle of the map.
 var _following: bool = false
@@ -418,8 +458,28 @@ func _plan_decoration() -> void:
 		var lot_rect: Rect2 = _rect_of(area.lots[lot_id]["boundary"])
 		everything = lot_rect if first else everything.merge(lot_rect)
 		first = false
+	_lot_bounds = everything
 	_world_bounds = everything.grow(70.0 * FOOT)
+	var near: Rect2 = everything.grow(40.0 * FOOT)
 	everything = everything.grow(200.0 * FOOT)
+
+	# Soft, large blotches of lighter and darker grass, and mowing stripes on the lawns.
+	var patch_rng: RandomNumberGenerator = _rng_for("grass patches")
+	var patch_colors: Array[Color] = [Color(0.72, 0.80, 0.52), Color(0.34, 0.47, 0.29), Color(0.70, 0.70, 0.44)]
+	for index: int in 46:
+		_patches.append({
+			"x": patch_rng.randf_range(near.position.x, near.end.x),
+			"y": patch_rng.randf_range(near.position.y, near.end.y),
+			"r": patch_rng.randf_range(10.0, 30.0) * FOOT,
+			"color": patch_colors[patch_rng.randi_range(0, patch_colors.size() - 1)],
+		})
+	for lot_id: String in area.lots:
+		var lawn: Rect2 = _rect_of(area.lots[lot_id]["boundary"])
+		var width: float = 5.0 * FOOT
+		var count: int = int(lawn.size.x / width)
+		for index: int in range(0, count, 2):
+			var x: float = lawn.position.x + float(index) * width
+			_stripes.append([Vector2(x, lawn.position.y), Vector2(minf(x + width, lawn.end.x), lawn.end.y)])
 
 	var rng: RandomNumberGenerator = _rng_for("grass")
 	for index: int in 900:
@@ -434,12 +494,19 @@ func _plan_decoration() -> void:
 		footprints.append(_rect_of(area.buildings[building_id]["footprint"]))
 
 	var wash_spots: Array = []
+	var fronts: Array = []  # [building_id, curb, toward, beside, door, reach] for front gardens
 	for building_id: String in area.sorted_building_ids():
 		var building: Dictionary = area.buildings[building_id]
 		var door: Vector2 = Vector2(building["door"][0], building["door"][1])
 		var street: Dictionary = _nearest_street_point(door)
 		var store: bool = _is_store(building)
 		var deco_rng: RandomNumberGenerator = _rng_for(building_id + ":garden")
+		var rect: Rect2 = _rect_of(building["footprint"])
+		var along_x: bool = absf(door.y - rect.position.y) < 1.0 or absf(door.y - rect.end.y) < 1.0
+		var outward: Vector2 = Vector2(0, -1 if absf(door.y - rect.position.y) < 1.0 else 1) if along_x \
+				else Vector2(-1 if absf(door.x - rect.position.x) < 1.0 else 1, 0)
+		var style: Dictionary = _plan_style(building, outward, along_x)
+		var porch: bool = style["porch"]
 		if not street.is_empty():
 			var toward: Vector2 = (street["point"] as Vector2 - door).normalized()
 			var reach: float = maxf(float(street["distance"]) - float(street["half"]), 0.0)
@@ -451,27 +518,39 @@ func _plan_decoration() -> void:
 				var post: Vector2 = curb - toward * 6.5 * FOOT + beside * 3.0 * FOOT
 				_mailboxes.append({"x": post.x, "y": post.y, "along": toward,
 						"paint": [Color(0.22, 0.30, 0.42), Color(0.30, 0.30, 0.32), Color(0.20, 0.36, 0.26)][deco_rng.randi_range(0, 2)]})
+				fronts.append([building_id, curb, toward, beside, door, reach])
 				# Flower beds along both sides of some front walks.
 				if deco_rng.randf() < 0.6 and reach > 16.0 * FOOT:
 					for t: float in [0.3, 0.55]:
+						if porch and reach * t < PORCH_DEPTH + 3.0 * FOOT:
+							continue
 						for side: float in [1.0, -1.0]:
 							var at: Vector2 = door + toward * reach * t + toward.orthogonal() * side * 3.0 * FOOT
 							_flowers.append(_flower_cluster(at, toward, deco_rng))
+		# Galvanized garbage cans by the back corner of the east wall.
+		if not store and absi((building_id + ":cans").hash()) % 5 != 0:
+			var rear: Vector2 = -outward
+			var cans: int = 1 + absi((building_id + ":cans").hash()) % 2
+			for index: int in cans:
+				var spot: Vector2
+				if along_x:
+					var rear_y: float = rect.end.y if rear.y > 0.0 else rect.position.y
+					spot = Vector2(rect.end.x + 2.0 * FOOT, rear_y - rear.y * (3.0 + 2.1 * float(index)) * FOOT)
+				else:
+					var rear_x: float = rect.end.x if rear.x > 0.0 else rect.position.x
+					spot = Vector2(rear_x - rear.x * (3.0 + 2.1 * float(index)) * FOOT, rect.position.y - 2.0 * FOOT)
+				_cans.append({"x": spot.x, "y": spot.y})
 		# Shrubs along the wall the door is on, leaving the door clear.
-		var rect: Rect2 = _rect_of(building["footprint"])
 		var shrub_rng: RandomNumberGenerator = _rng_for(building_id + ":shrubs")
-		var along_x: bool = absf(door.y - rect.position.y) < 1.0 or absf(door.y - rect.end.y) < 1.0
-		var outward: Vector2 = Vector2(0, -1 if absf(door.y - rect.position.y) < 1.0 else 1) if along_x \
-				else Vector2(-1 if absf(door.x - rect.position.x) < 1.0 else 1, 0)
 		var length: float = rect.size.x if along_x else rect.size.y
 		var count: int = int(length / (7.0 * FOOT))
 		for index: int in count:
 			var u: float = (float(index) + 0.5) / float(count)
 			var at: Vector2 = Vector2(rect.position.x + rect.size.x * u, door.y) if along_x \
 					else Vector2(door.x, rect.position.y + rect.size.y * u)
-			if at.distance_to(door) < 5.0 * FOOT:
+			if at.distance_to(door) < (6.0 if porch else 5.0) * FOOT:
 				continue
-			at += outward * 2.5 * FOOT
+			at += outward * ((PORCH_DEPTH + 2.2 * FOOT) if porch else 2.5 * FOOT)
 			_shrubs.append({"x": at.x, "y": at.y, "size": shrub_rng.randf_range(2.2, 3.2) * FOOT, "shade": shrub_rng.randf()})
 			if not store and deco_rng.randf() < 0.55:
 				var wall: Vector2 = Vector2(1, 0) if along_x else Vector2(0, 1)
@@ -490,6 +569,21 @@ func _plan_decoration() -> void:
 		if not _clotheslines.is_empty() or _plan_clothesline(spot[0], spot[1], spot[2], true):
 			break
 
+	# Rows of tulips along the front of two gardens, on the side away from the mailbox.
+	fronts.sort_custom(func(a: Array, b: Array) -> bool:
+		return absi((String(a[0]) + ":tulips").hash()) < absi((String(b[0]) + ":tulips").hash()))
+	for front: Array in fronts.slice(0, 2):
+		var curb: Vector2 = front[1]
+		var toward: Vector2 = front[2]
+		var away: Vector2 = -(front[3] as Vector2)
+		var base: Vector2 = curb - toward * 7.5 * FOOT
+		var tulip_rng: RandomNumberGenerator = _rng_for(String(front[0]) + ":tulips")
+		var colors: Array = []
+		var first_color: int = tulip_rng.randi_range(0, TULIPS.size() - 1)
+		for index: int in 12:
+			colors.append(TULIPS[(first_color + (index % 2 if tulip_rng.randf() < 0.5 else 0)) % TULIPS.size()])
+		_tulips.append({"a": base + away * 4.5 * FOOT, "b": base + away * 15.0 * FOOT, "colors": colors})
+
 	for lot_id: String in area.lots:
 		var boundary: Array = area.lots[lot_id]["boundary"]
 		var lot_rect: Rect2 = _rect_of(boundary)
@@ -499,9 +593,9 @@ func _plan_decoration() -> void:
 		for index: int in boundary.size():
 			var a: Vector2 = Vector2(boundary[index][0], boundary[index][1])
 			var b: Vector2 = Vector2(boundary[(index + 1) % boundary.size()][0], boundary[(index + 1) % boundary.size()][1])
-			var near: Dictionary = _nearest_street_point((a + b) / 2.0)
-			if not near.is_empty() and float(near["distance"]) < front_distance:
-				front_distance = near["distance"]
+			var edge_near: Dictionary = _nearest_street_point((a + b) / 2.0)
+			if not edge_near.is_empty() and float(edge_near["distance"]) < front_distance:
+				front_distance = edge_near["distance"]
 				front = index
 		for index: int in boundary.size():
 			if index == front:
@@ -528,6 +622,12 @@ func _plan_decoration() -> void:
 			for line: Dictionary in _clotheslines:
 				if Geometry2D.get_closest_point_to_segment(spot, line["a"], line["b"]).distance_to(spot) < 10.0 * FOOT:
 					clear = false
+			for row: Dictionary in _tulips:
+				if Geometry2D.get_closest_point_to_segment(spot, row["a"], row["b"]).distance_to(spot) < 7.0 * FOOT:
+					clear = false
+			for can: Dictionary in _cans:
+				if Vector2(can["x"], can["y"]).distance_to(spot) < 6.0 * FOOT:
+					clear = false
 			var street_gap: Dictionary = _nearest_street_point(spot)
 			if not street_gap.is_empty() and float(street_gap["distance"]) < float(street_gap["half"]) + 9.0 * FOOT:
 				clear = false
@@ -536,11 +636,20 @@ func _plan_decoration() -> void:
 					clear = false
 			if not clear:
 				continue
+			var evergreen: bool = tree_rng.randf() < 0.25
+			var specks: Array = []
+			for speck: int in 14:
+				specks.append(Vector2(tree_rng.randf_range(-1.1, 1.1), tree_rng.randf_range(-1.0, 0.8)))
 			_trees.append({
 				"x": spot.x, "y": spot.y, "size": tree_rng.randf_range(7.0, 11.0) * FOOT,
-				"shade": tree_rng.randf(), "evergreen": tree_rng.randf() < 0.25,
+				"shade": tree_rng.randf(), "evergreen": evergreen,
+				# Some flowering trees, in blossom in spring.
+				"blossom": -1 if evergreen or tree_rng.randf() < 0.55 else tree_rng.randi_range(0, BLOSSOMS.size() - 1),
+				"specks": specks,
 			})
 			wanted -= 1
+
+	_plan_yard_things(fronts)
 
 	# Street lamps, alternating sides, and a couple of cars at the curb.
 	for street_id: String in area.streets:
@@ -563,6 +672,10 @@ func _plan_decoration() -> void:
 						clear = false
 				if clear:
 					_lamps.append({"x": spot.x, "y": spot.y})
+					var glint_rng: RandomNumberGenerator = _rng_for("glints %d %d" % [roundi(spot.x), roundi(spot.y)])
+					for glint: int in 7:
+						var on: Vector2 = spot - across * side * glint_rng.randf_range(3.0, 13.0) * FOOT + along * glint_rng.randf_range(-10.0, 10.0) * FOOT
+						_glints.append({"x": on.x, "y": on.y, "phase": glint_rng.randf() * TAU})
 				side = -side
 				at += 90.0 * FOOT
 			var car_rng: RandomNumberGenerator = _rng_for(street_id + ":cars")
@@ -572,6 +685,8 @@ func _plan_decoration() -> void:
 				var spot: Vector2 = a + along * place + across * car_side * (half - 4.5 * FOOT)
 				_cars.append({"x": spot.x, "y": spot.y, "along_x": absf(along.x) >= absf(along.y),
 						"paint": CAR_PAINT[car_rng.randi_range(0, CAR_PAINT.size() - 1)]})
+
+	_plan_street_furniture()
 
 	# Large, soft cloud shadows that drift over the street by day.
 	var cloud_rng: RandomNumberGenerator = _rng_for("clouds")
@@ -627,6 +742,152 @@ func _plan_clothesline(building_id: String, middle: Vector2, along: Vector2, for
 	return true
 
 
+## How a building is dressed: shutters, curtains, a porch, a dormer or a bay
+## window, a store awning. Invented, chosen from the building's ID (P-023).
+func _plan_style(building: Dictionary, outward: Vector2, along_x: bool) -> Dictionary:
+	var id: String = building["id"]
+	var rng: RandomNumberGenerator = _rng_for(id + ":style")
+	var store: bool = _is_store(building)
+	var rect: Rect2 = _rect_of(building["footprint"])
+	var porch: bool = not store and String(building.get("building_type", "")) == "two-family"
+	var style: Dictionary = {
+		"out": outward, "along_x": along_x,
+		"shutter": SHUTTERS[rng.randi_range(0, SHUTTERS.size() - 1)],
+		"curtain": CURTAINS[rng.randi_range(0, CURTAINS.size() - 1)],
+		"cafe": rng.randf() < 0.4,
+		"porch": porch, "dormer": false, "bay": false,
+		"flicker": rng.randf() * TAU,
+	}
+	# The walls the viewer sees: south and east. Each is [from, to, outward].
+	var south: Array = [rect.position, Vector2(rect.end.x, rect.position.y), Vector2(0, -1)]
+	var east: Array = [Vector2(rect.end.x, rect.position.y), rect.end, Vector2(1, 0)]
+	if store:
+		style["awning_wall"] = south if outward == Vector2(0, -1) else east
+	elif not porch:
+		var character: int = absi((id + ":character").hash()) % 3
+		style["dormer"] = character == 0
+		style["bay"] = character == 1
+		var wall: Array = south if outward == Vector2(1, 0) else east
+		var length: float = (wall[0] as Vector2).distance_to(wall[1])
+		var count: int = maxi(1, int(length / (11.0 * FOOT)))
+		style["bay_wall"] = wall
+		style["bay_u"] = (float(count / 2) + 0.5) / float(count) * length
+	_styles[id] = style
+	return style
+
+
+## True if nothing planned so far stands within the gap of a yard spot.
+func _yard_spot_clear(spot: Vector2, gap: float) -> bool:
+	for building_id: String in area.buildings:
+		if _rect_of(area.buildings[building_id]["footprint"]).grow(gap).has_point(spot):
+			return false
+	for tree: Dictionary in _trees:
+		if Vector2(tree["x"], tree["y"]).distance_to(spot) < gap + 2.0 * FOOT:
+			return false
+	for walk: Array in _walks:
+		if Geometry2D.get_closest_point_to_segment(spot, walk[0], walk[1]).distance_to(spot) < gap:
+			return false
+	for row: Dictionary in _tulips:
+		if Geometry2D.get_closest_point_to_segment(spot, row["a"], row["b"]).distance_to(spot) < gap:
+			return false
+	for things: Array in [_flowers, _mailboxes, _cans, _shrubs]:
+		for thing: Dictionary in things:
+			if Vector2(thing["x"], thing["y"]).distance_to(spot) < gap:
+				return false
+	for line: Dictionary in _clotheslines:
+		if Geometry2D.get_closest_point_to_segment(spot, line["a"], line["b"]).distance_to(spot) < gap:
+			return false
+	return true
+
+
+## A child's wagon left in one front yard, and a bicycle leaning on one fence.
+func _plan_yard_things(fronts: Array) -> void:
+	var order: Array = fronts.duplicate()
+	order.sort_custom(func(a: Array, b: Array) -> bool:
+		return absi((String(a[0]) + ":wagon").hash()) < absi((String(b[0]) + ":wagon").hash()))
+	for front: Array in order:
+		if not _wagons.is_empty():
+			break
+		var door: Vector2 = front[4]
+		var toward: Vector2 = front[2]
+		for t: float in [0.45, 0.65]:
+			for side: float in [1.0, -1.0]:
+				var spot: Vector2 = door + toward * float(front[5]) * t + toward.orthogonal() * side * 8.0 * FOOT
+				if _wagons.is_empty() and _yard_spot_clear(spot, 4.5 * FOOT):
+					_wagons.append({"x": spot.x, "y": spot.y, "along": toward.orthogonal().rotated(0.45 * side)})
+	var lots: Array = area.lots.keys()
+	lots.sort_custom(func(a: String, b: String) -> bool:
+		return absi((a + ":bicycle").hash()) < absi((b + ":bicycle").hash()))
+	for lot_id: String in lots:
+		var rect: Rect2 = _rect_of(area.lots[lot_id]["boundary"])
+		var street: Dictionary = _nearest_street_point(rect.get_center())
+		# Only lots with the street to the south, so the west fence is in plain view.
+		if street.is_empty() or (street["point"] as Vector2).y > rect.get_center().y:
+			continue
+		for depth: float in [0.32, 0.5, 0.7]:
+			var spot: Vector2 = Vector2(rect.position.x + 1.3 * FOOT, rect.position.y + rect.size.y * depth)
+			if _yard_spot_clear(spot, 4.0 * FOOT):
+				_bicycles.append({"x": spot.x, "y": spot.y, "along": Vector2(0, 1), "lean": Vector2(-1, 0),
+						"paint": BIKE_PAINT[absi((lot_id + ":bicycle").hash()) % BIKE_PAINT.size()]})
+				return
+
+
+func _near_furniture(spot: Vector2, gap: float) -> bool:
+	for walk: Array in _walks:
+		if Geometry2D.get_closest_point_to_segment(spot, walk[0], walk[1]).distance_to(spot) < gap:
+			return true
+	for things: Array in [_lamps, _poles, _hydrants]:
+		for thing: Dictionary in things:
+			if Vector2(thing["x"], thing["y"]).distance_to(spot) < gap:
+				return true
+	return false
+
+
+## Utility poles with sagging wires along the far side of each street, fire
+## hydrants at the curb and storm drain grates in the gutters.
+func _plan_street_furniture() -> void:
+	for street_id: String in area.streets:
+		var street: Dictionary = area.streets[street_id]
+		var line: Array = street["centerline"]
+		var half: float = float(street["width"]) / 2.0
+		var rng: RandomNumberGenerator = _rng_for(street_id + ":furniture")
+		var previous: Dictionary = {}
+		for index: int in line.size() - 1:
+			var a: Vector2 = Vector2(line[index][0], line[index][1])
+			var b: Vector2 = Vector2(line[index + 1][0], line[index + 1][1])
+			var along: Vector2 = (b - a).normalized()
+			var across: Vector2 = along.orthogonal()
+			var length: float = a.distance_to(b)
+			# The far side of the street, so the wires never cross in front of it.
+			var far: float = -1.0 if _faces_viewer(across) else 1.0
+			var at: float = 10.0 * FOOT
+			while at < length:
+				var spot: Vector2 = a + along * at + across * far * (half + 0.9 * FOOT)
+				var tries: int = 0
+				while _near_furniture(spot, 9.0 * FOOT) and tries < 4:
+					spot -= along * 7.0 * FOOT
+					tries += 1
+				var pole: Dictionary = {"x": spot.x, "y": spot.y, "across": across, "transformer": rng.randf() < 0.35}
+				if not previous.is_empty():
+					var from: Vector2 = Vector2(previous["x"], previous["y"])
+					for piece: int in 6:
+						_wires.append({"a": from, "b": spot, "across": across, "t0": float(piece) / 6.0, "t1": float(piece + 1) / 6.0})
+				_poles.append(pole)
+				previous = pole
+				at += 100.0 * FOOT
+			for side: float in [1.0, -1.0]:
+				var hydrant_at: Vector2 = a + along * length * (0.24 if side > 0.0 else 0.66) + across * side * (half + 1.3 * FOOT)
+				var tries: int = 0
+				while _near_furniture(hydrant_at, 7.0 * FOOT) and tries < 6:
+					hydrant_at += along * 6.0 * FOOT
+					tries += 1
+				_hydrants.append({"x": hydrant_at.x, "y": hydrant_at.y})
+				for drain: int in 2:
+					var u: float = length * (0.12 + 0.5 * float(drain)) + rng.randf_range(0.0, 0.25) * length
+					var spot: Vector2 = a + along * u + across * side * (half - 0.8 * FOOT)
+					_drains.append({"x": spot.x, "y": spot.y, "along": along, "inward": -across * side})
+
+
 # --- Light -----------------------------------------------------------------
 
 ## 0 in full daylight, 1 in the middle of the night.
@@ -643,9 +904,13 @@ func _update_light() -> void:
 	var minute: float = float(simulation.clock.minute_of_day) + minute_fraction
 	_night = night_amount()
 	var golden: float = maxf(0.0, 1.0 - absf(minute - 1100.0) / 80.0) + maxf(0.0, 1.0 - absf(minute - 380.0) / 60.0)
+	_golden = clampf(golden, 0.0, 1.0)
 	var warm: Color = Color(1.0, 0.85, 0.68)
-	var dark: Color = Color(0.28, 0.33, 0.55)
-	_ambient = Color.WHITE.lerp(warm, clampf(golden, 0.0, 1.0) * 0.75).lerp(dark, _night)
+	# Moonlight: blue, but light enough that the street stays readable.
+	var dark: Color = Color(0.27, 0.33, 0.60)
+	_ambient = Color.WHITE.lerp(warm, _golden * 0.75).lerp(dark, _night)
+	var month: int = int(SimDate.from_day_index(simulation.clock.day_index)["month"])
+	_spring = month == 4 or month == 5
 
 
 func _tint(color: Color) -> Color:
@@ -657,7 +922,8 @@ func _tint(color: Color) -> Color:
 func _shadow_lean() -> Vector2:
 	var minute: float = float(simulation.clock.minute_of_day)
 	var t: float = clampf((minute - 750.0) / 420.0, -1.0, 1.0)
-	return Vector2(t * 0.9, 0.55)
+	# Long shadows when the sun is low.
+	return Vector2(t * 0.9, 0.55) * (1.0 + 0.8 * _golden)
 
 
 # --- Drawing -----------------------------------------------------------------
@@ -667,18 +933,31 @@ func _draw() -> void:
 		return
 	_update_light()
 	_building_shapes.clear()
+	if selected_id != _selected_seen:
+		_selected_seen = selected_id
+		_selected_since = Time.get_ticks_msec()
 	draw_rect(Rect2(Vector2.ZERO, VIEW_SIZE), _tint(COLOR_GRASS))
 	_draw_tufts()
 	for lot_id: String in area.lots:
 		var lot: PackedVector2Array = _polygon(area.lots[lot_id]["boundary"])
 		draw_colored_polygon(lot, _tint(COLOR_LAWN))
+	_draw_lawn_texture()
 	for street_id: String in area.streets:
 		_draw_street(area.streets[street_id])
+	for drain: Dictionary in _drains:
+		_draw_drain(drain)
+	var worn: Color = _tint(Color(0.52, 0.45, 0.32, 0.22))
 	for walk: Array in _walks:
+		# Grass worn thin beside the walk, where feet stray off it.
+		_draw_strip(walk[0], walk[1], 5.6 * FOOT, worn)
+		_ellipse(_iso((walk[1] as Vector2).x, (walk[1] as Vector2).y), 4.0 * FOOT * _scale * 1.4, 0.5, worn)
 		_draw_strip(walk[0], walk[1], 3.5 * FOOT, _tint(COLOR_PATH))
+		_draw_strip(walk[0], walk[1], 3.5 * FOOT * 0.18, _tint(Color(COLOR_PATH.lightened(0.12), 0.6)))
 	_draw_shadows()
 	_draw_cloud_shadows()
 	_draw_lamp_pools()
+	_draw_glints()
+	_draw_haze()
 	_layout_people()
 
 	# Everything that stands up, from the back of the view to the front.
@@ -707,6 +986,17 @@ func _draw() -> void:
 		drawables.append({"key": _iso(middle.x, middle.y).y - 2.0, "kind": "fence", "item": fence})
 	for person_id: String in _screen_positions:
 		drawables.append({"key": (_screen_positions[person_id] as Vector2).y + 0.5, "kind": "person", "id": person_id})
+	for kind: String in ["pole", "hydrant", "can", "bicycle", "wagon"]:
+		var things: Array = {"pole": _poles, "hydrant": _hydrants, "can": _cans, "bicycle": _bicycles, "wagon": _wagons}[kind]
+		for thing: Dictionary in things:
+			drawables.append({"key": _iso(thing["x"], thing["y"]).y, "kind": kind, "item": thing})
+	for wire: Dictionary in _wires:
+		var middle: Vector2 = (wire["a"] as Vector2).lerp(wire["b"], (float(wire["t0"]) + float(wire["t1"])) / 2.0)
+		drawables.append({"key": _iso(middle.x, middle.y).y + 0.2, "kind": "wire", "item": wire})
+	if _spring:
+		for row: Dictionary in _tulips:
+			var row_middle: Vector2 = ((row["a"] as Vector2) + (row["b"] as Vector2)) / 2.0
+			drawables.append({"key": _iso(row_middle.x, row_middle.y).y - 1.0, "kind": "tulips", "item": row})
 	drawables.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["key"]) < float(b["key"]))
 
 	_draw_talk_lines()
@@ -733,9 +1023,25 @@ func _draw() -> void:
 				_draw_clothesline(item["item"])
 			"person":
 				_draw_person(simulation.state.people[item["id"]], hovered.get("person", "") == item["id"])
+			"pole":
+				_draw_pole(item["item"])
+			"wire":
+				_draw_wire(item["item"])
+			"hydrant":
+				_draw_hydrant(item["item"])
+			"can":
+				_draw_can(item["item"])
+			"bicycle":
+				_draw_bicycle(item["item"])
+			"wagon":
+				_draw_wagon(item["item"])
+			"tulips":
+				_draw_tulips(item["item"])
 
 	_draw_smoke()
 	_draw_birds()
+	_draw_golden_light()
+	_draw_vignette()
 	_draw_street_names()
 	_draw_building_badges(home_id)
 	_draw_bubbles()
@@ -802,6 +1108,11 @@ func _draw_street(street: Dictionary) -> void:
 		var b: Vector2 = Vector2(line[index + 1][0], line[index + 1][1])
 		var along: Vector2 = (b - a).normalized()
 		var across: Vector2 = along.orthogonal()
+		# The street runs on past the ends of the area and fades into the haze.
+		if index == 0:
+			a -= along * 160.0 * FOOT
+		if index == line.size() - 2:
+			b += along * 160.0 * FOOT
 		for side: float in [1.0, -1.0]:
 			var middle: Vector2 = across * side * (half + walk / 2.0)
 			_draw_strip(a + middle, b + middle, walk, _tint(COLOR_SIDEWALK))
@@ -814,6 +1125,10 @@ func _draw_street(street: Dictionary) -> void:
 				draw_line(_iso(p.x, p.y), _iso(q.x, q.y), joint, 1.0)
 				at += 5.0 * FOOT
 		_draw_strip(a, b, half * 2.0, _tint(COLOR_ASPHALT))
+		# Worn, lighter wheel tracks and a darker gutter along each curb.
+		for side: float in [1.0, -1.0]:
+			_draw_strip(a + across * side * half * 0.45, b + across * side * half * 0.45, 3.0 * FOOT, _tint(Color(COLOR_ASPHALT.lightened(0.10), 0.35)))
+			_draw_strip(a + across * side * (half - 0.7 * FOOT), b + across * side * (half - 0.7 * FOOT), 1.4 * FOOT, _tint(Color(0.30, 0.30, 0.31, 0.45)))
 		for side: float in [1.0, -1.0]:
 			var edge: Vector2 = across * side * half
 			draw_line(_iso(a.x + edge.x, a.y + edge.y), _iso(b.x + edge.x, b.y + edge.y), _tint(COLOR_CURB), clampf(1.5 * _zoom, 1.0, 3.0))
@@ -923,6 +1238,12 @@ func _draw_building(building: Dictionary, is_home: bool, hovered: bool) -> void:
 	var edge: Color = _tint(COLOR_OUTLINE.lerp(siding, 0.35))
 	var lit: bool = _night > 0.2 and _anyone_awake(id)
 	var shapes: Array = []
+	var style: Dictionary = _styles.get(id, {})
+	var porch: bool = style.get("porch", false)
+	var door_seen: bool = _faces_viewer(style.get("out", Vector2(0, 1)))
+	# A porch on a wall the viewer cannot see stands behind the house.
+	if porch and not door_seen:
+		_draw_porch(building, style, roof)
 
 	# Walls that face the viewer: south (y0) and east (x1).
 	var south: PackedVector2Array = PackedVector2Array([_p3(x0, y0, 0), _p3(x1, y0, 0), _p3(x1, y0, h), _p3(x0, y0, h)])
@@ -934,18 +1255,33 @@ func _draw_building(building: Dictionary, is_home: bool, hovered: bool) -> void:
 	if not store:
 		_draw_clapboard(Vector2(x0, y0), Vector2(x1, y0), h, _tint(siding.darkened(0.10)))
 		_draw_clapboard(Vector2(x1, y0), Vector2(x1, y1), h, _tint(siding.darkened(0.24)))
+		# Corner boards.
+		var corner: float = maxf(1.0, 0.5 * FOOT * _scale)
+		draw_line(_p3(x1, y0, 0), _p3(x1, y0, h), _tint(COLOR_TRIM), corner)
+		draw_line(_p3(x0, y0, 0), _p3(x0, y0, h), _tint(COLOR_TRIM), corner)
+	_draw_foundation(Vector2(x0, y0), Vector2(x1, y0), store)
+	_draw_foundation(Vector2(x1, y0), Vector2(x1, y1), store)
 	_draw_wall_openings(building, Vector2(x0, y0), Vector2(x1, y0), lit, store)
 	_draw_wall_openings(building, Vector2(x1, y0), Vector2(x1, y1), lit, store)
 
 	if store:
+		_draw_awning(building, style)
 		var top: PackedVector2Array = PackedVector2Array([_p3(x0, y0, h), _p3(x1, y0, h), _p3(x1, y1, h), _p3(x0, y1, h)])
 		_face(top, _tint(roof), edge)
 		var lip: float = _roof_rise(building)
 		_face(PackedVector2Array([_p3(x0, y0, h), _p3(x1, y0, h), _p3(x1, y0, h + lip), _p3(x0, y0, h + lip)]), _tint(siding.darkened(0.05)), edge)
 		_face(PackedVector2Array([_p3(x1, y0, h), _p3(x1, y1, h), _p3(x1, y1, h + lip), _p3(x1, y0, h + lip)]), _tint(siding.darkened(0.2)), edge)
+		# A coping of light stone along the top of the parapet.
+		draw_polyline(PackedVector2Array([_p3(x0, y0, h + lip), _p3(x1, y0, h + lip), _p3(x1, y1, h + lip)]), _tint(Color(0.90, 0.86, 0.78)), maxf(1.5, 0.4 * FOOT * _scale))
 		shapes.append(top)
 		_draw_store_sign(building, h + lip)
 	else:
+		if porch and door_seen:
+			_draw_porch(building, style, roof)
+		elif door_seen:
+			_draw_stoop(building, style)
+		if style.get("bay", false):
+			_draw_bay(id, style, siding, roof, lit)
 		shapes.append_array(_draw_gable_roof(building, rect, h, siding, roof, edge))
 
 	if is_home or hovered:
@@ -971,24 +1307,48 @@ func _draw_wall_openings(building: Dictionary, a: Vector2, b: Vector2, lit: bool
 	var length: float = a.distance_to(b)
 	var along: Vector2 = (b - a) / length
 	var count: int = maxi(1, int(length / (11.0 * FOOT)))
-	var glass: Color = COLOR_LIT if lit else _tint(COLOR_GLASS)
+	var style: Dictionary = _styles.get(building["id"], {})
+	var glass: Color = _window_glass(building["id"], lit)
 	var frame: Color = _tint(COLOR_TRIM)
+	var skip_u: float = -1.0
+	if style.get("bay", false) and (style["bay_wall"][0] as Vector2).is_equal_approx(a) and (style["bay_wall"][1] as Vector2).is_equal_approx(b):
+		skip_u = style["bay_u"]
+	var shutter: Color = _tint(_wall_shade(style.get("shutter", SHUTTERS[0]), along.orthogonal()))
+	var detailed: bool = _scale * FOOT >= 1.6
 	for story: int in int(building["stories"]):
 		var base: float = float(story) * STORY_HEIGHT_INCHES
 		for index: int in count:
 			var u: float = (float(index) + 0.5) / float(count) * length
 			if story == 0 and on_wall and absf(u - a.distance_to(door)) < 5.0 * FOOT:
 				continue
+			if story == 0 and skip_u >= 0.0 and absf(u - skip_u) < FOOT:
+				continue
 			var half: float = (3.5 if store and story == 0 else 1.6) * FOOT
 			var low: float = base + (2.0 if store and story == 0 else 3.2) * FOOT
 			var high: float = base + 7.0 * FOOT
 			var p: Vector2 = a + along * (u - half)
 			var q: Vector2 = a + along * (u + half)
+			if not store:
+				for side: Array in [[p - along * 0.95 * FOOT, p - along * 0.15 * FOOT], [q + along * 0.15 * FOOT, q + along * 0.95 * FOOT]]:
+					var s0: Vector2 = side[0]
+					var s1: Vector2 = side[1]
+					draw_colored_polygon(PackedVector2Array([_p3(s0.x, s0.y, low - 0.2 * FOOT), _p3(s1.x, s1.y, low - 0.2 * FOOT),
+							_p3(s1.x, s1.y, high + 0.2 * FOOT), _p3(s0.x, s0.y, high + 0.2 * FOOT)]), shutter)
 			var pane: PackedVector2Array = PackedVector2Array([_p3(p.x, p.y, low), _p3(q.x, q.y, low), _p3(q.x, q.y, high), _p3(p.x, p.y, high)])
 			draw_colored_polygon(pane, glass)
+			if not lit and detailed:
+				# A pale streak of reflected sky.
+				draw_line(_p3(p.x, p.y, low + (high - low) * 0.35).lerp(_p3(q.x, q.y, low), 0.1),
+						_p3(p.x, p.y, high).lerp(_p3(q.x, q.y, high), 0.55), Color(1, 1, 1, 0.22 * (1.0 - _night)), 1.0)
+			if not store and detailed:
+				_draw_curtains(p, q, low, high, style, lit)
+			if store and story == 0 and detailed:
+				_draw_shop_window(p, q, low, high)
 			draw_polyline(_closed(pane), frame, 1.0, true)
 			var mid: Vector2 = (p + q) / 2.0
 			draw_line(_p3(mid.x, mid.y, low), _p3(mid.x, mid.y, high), frame, 1.0)
+			# Sill.
+			draw_line(_p3(p.x, p.y, low) - along.orthogonal() * 0.0, _p3(q.x, q.y, low), frame, maxf(1.0, 0.3 * FOOT * _scale))
 			if lit:
 				var centre: Vector2 = (pane[0] + pane[2]) / 2.0
 				draw_circle(centre, 6.0 * _zoom, Color(1.0, 0.85, 0.45, 0.12))
@@ -1000,11 +1360,26 @@ func _draw_wall_openings(building: Dictionary, a: Vector2, b: Vector2, lit: bool
 		var leaf: PackedVector2Array = PackedVector2Array([_p3(p.x, p.y, 0), _p3(q.x, q.y, 0), _p3(q.x, q.y, 7.0 * FOOT), _p3(p.x, p.y, 7.0 * FOOT)])
 		draw_colored_polygon(leaf, color)
 		draw_polyline(_closed(leaf), frame, 1.0, true)
-		# A little roof over the step.
-		var hood: PackedVector2Array = PackedVector2Array([
-			_p3(p.x - along.x * FOOT, p.y - along.y * FOOT, 8.0 * FOOT), _p3(q.x + along.x * FOOT, q.y + along.y * FOOT, 8.0 * FOOT),
-			_p3(q.x + along.x * FOOT, q.y + along.y * FOOT, 9.0 * FOOT), _p3(p.x - along.x * FOOT, p.y - along.y * FOOT, 9.0 * FOOT)])
-		draw_colored_polygon(hood, frame)
+		if _scale * FOOT >= 1.6:
+			# A small window in the door and a brass knob.
+			var w0: Vector2 = p.lerp(q, 0.28)
+			var w1: Vector2 = p.lerp(q, 0.72)
+			draw_colored_polygon(PackedVector2Array([_p3(w0.x, w0.y, 4.6 * FOOT), _p3(w1.x, w1.y, 4.6 * FOOT),
+					_p3(w1.x, w1.y, 6.2 * FOOT), _p3(w0.x, w0.y, 6.2 * FOOT)]), glass)
+			var knob: Vector2 = p.lerp(q, 0.82)
+			draw_circle(_p3(knob.x, knob.y, 3.4 * FOOT), maxf(1.0, 0.22 * FOOT * _scale), _tint(Color(0.85, 0.70, 0.30)))
+		if not store and not bool(style.get("porch", false)):
+			# A little roof over the step, standing out from the wall.
+			var out: Vector2 = along.orthogonal() * 1.9 * FOOT
+			var hp: Vector2 = p - along * 0.8 * FOOT
+			var hq: Vector2 = q + along * 0.8 * FOOT
+			var hood: PackedVector2Array = PackedVector2Array([
+				_p3(hp.x, hp.y, 9.2 * FOOT), _p3(hq.x, hq.y, 9.2 * FOOT),
+				_p3(hq.x + out.x, hq.y + out.y, 8.3 * FOOT), _p3(hp.x + out.x, hp.y + out.y, 8.3 * FOOT)])
+			draw_colored_polygon(hood, _tint(_pick(ROOFS, building["id"] + "roof").lightened(0.1)))
+			draw_line(hood[3], hood[2], frame, maxf(1.0, 0.3 * FOOT * _scale))
+			for end: Vector2 in [hp, hq]:
+				draw_line(_p3(end.x + out.x, end.y + out.y, 8.3 * FOOT), _p3(end.x, end.y, 7.4 * FOOT), frame, 1.0)
 		if lit:
 			# A porch light by the door while someone is up after dark.
 			var strength: float = clampf((_night - 0.2) / 0.5, 0.0, 1.0)
@@ -1035,8 +1410,11 @@ func _draw_gable_roof(building: Dictionary, rect: Rect2, h: float, siding: Color
 		_face(back, _tint(roof.darkened(0.12)), roof_edge)
 		_face(front, _tint(roof.lightened(0.08)), roof_edge)
 		_draw_shingles(front, roof)
+		_draw_roof_trim(front, [front[0], front[3]], [back[0], back[3]], roof)
 		# This chimney stands on the front slope, so it is drawn over it.
 		_draw_chimney(_chimneys.get(building["id"], Vector3.ZERO), h + rise * 0.6)
+		if _styles.get(building["id"], {}).get("dormer", false):
+			_draw_dormer(building, rect, h, rise, siding, roof)
 		faces.append_array([gable, back, front])
 	else:
 		var ym: float = (y0 + y1) / 2.0
@@ -1049,6 +1427,9 @@ func _draw_gable_roof(building: Dictionary, rect: Rect2, h: float, siding: Color
 		_draw_chimney(_chimneys.get(building["id"], Vector3.ZERO), h)
 		_face(front, _tint(roof.lightened(0.08)), roof_edge)
 		_draw_shingles(front, roof)
+		_draw_roof_trim(front, [front[1], front[2]], [back[1], back[2]], roof)
+		if _styles.get(building["id"], {}).get("dormer", false):
+			_draw_dormer(building, rect, h, rise, siding, roof)
 		faces.append_array([gable, back, front])
 	return faces
 
@@ -1159,6 +1540,605 @@ func _draw_building_badges(home_id: String) -> void:
 			draw_string(_font, pill.position + Vector2(6, 12), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, 0.95))
 
 
+# --- Building details ----------------------------------------------------------
+
+## A world point (inches) at a height above the ground.
+func _pv(point: Vector2, z: float) -> Vector2:
+	return _p3(point.x, point.y, z)
+
+
+## Whether an upright face with this outward direction (world) faces the viewer.
+func _faces_viewer(normal: Vector2) -> bool:
+	return normal.x - normal.y > 0.01
+
+
+## Walls facing south get full light, walls facing east a little less.
+func _wall_shade(color: Color, normal: Vector2) -> Color:
+	return color.darkened(0.16 * clampf(normal.normalized().x, 0.0, 1.0))
+
+
+## An upright prism over a convex world polygon, from z0 to z1. Only the sides
+## facing the viewer are drawn, so they never overlap; then the top, if given.
+func _draw_prism(base: Array, z0: float, z1: float, color: Color, top: Color = Color(0, 0, 0, 0)) -> void:
+	var centre: Vector2 = Vector2.ZERO
+	for point: Vector2 in base:
+		centre += point
+	centre /= float(base.size())
+	var edge: Color = _tint(color.darkened(0.42))
+	for index: int in base.size():
+		var a: Vector2 = base[index]
+		var b: Vector2 = base[(index + 1) % base.size()]
+		var normal: Vector2 = (b - a).orthogonal().normalized()
+		if normal.dot((a + b) / 2.0 - centre) < 0.0:
+			normal = -normal
+		if not _faces_viewer(normal):
+			continue
+		_face(PackedVector2Array([_pv(a, z0), _pv(b, z0), _pv(b, z1), _pv(a, z1)]), _tint(_wall_shade(color, normal)), edge)
+	if top.a > 0.0:
+		var lid: PackedVector2Array = PackedVector2Array()
+		for point: Vector2 in base:
+			lid.append(_pv(point, z1))
+		_face(lid, _tint(top), edge)
+
+
+## Window glass: sky-tinted by day; warm and very faintly flickering when lit.
+func _window_glass(building_id: String, lit: bool) -> Color:
+	if not lit:
+		return _tint(COLOR_GLASS)
+	var phase: float = float(_styles.get(building_id, {}).get("flicker", 0.0))
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	var f: float = 0.965 + 0.025 * sin(now * 1.7 + phase) + 0.012 * sin(now * 5.3 + phase * 2.0)
+	return Color(COLOR_LIT.r * f, COLOR_LIT.g * f, COLOR_LIT.b * f)
+
+
+## Tie-back curtains or a cafe curtain across the lower half of a window.
+func _draw_curtains(p: Vector2, q: Vector2, low: float, high: float, style: Dictionary, lit: bool) -> void:
+	var cloth: Color = style.get("curtain", CURTAINS[0])
+	cloth = cloth.lerp(Color(1.0, 0.74, 0.42), 0.4) if lit else _tint(cloth)
+	cloth.a = 0.9
+	var span: float = high - low
+	if style.get("cafe", false):
+		draw_colored_polygon(PackedVector2Array([_pv(p, low), _pv(q, low), _pv(q, low + span * 0.48), _pv(p, low + span * 0.48)]), cloth)
+		draw_line(_pv(p, low + span * 0.48), _pv(q, low + span * 0.48), Color(cloth.darkened(0.2), 0.9), 1.0)
+	else:
+		for side: Array in [[p, q], [q, p]]:
+			var edge: Vector2 = side[0]
+			var other: Vector2 = side[1]
+			draw_colored_polygon(PackedVector2Array([
+				_pv(edge, high), _pv(edge.lerp(other, 0.3), high), _pv(edge.lerp(other, 0.1), low + span * 0.45),
+				_pv(edge.lerp(other, 0.16), low), _pv(edge, low)]), cloth)
+	draw_colored_polygon(PackedVector2Array([_pv(p, high), _pv(q, high), _pv(q, high - span * 0.14), _pv(p, high - span * 0.14)]), cloth.darkened(0.06))
+
+
+## Goods on shelves behind the store window.
+func _draw_shop_window(p: Vector2, q: Vector2, low: float, high: float) -> void:
+	var goods: Array[Color] = [Color(0.86, 0.36, 0.26), Color(0.95, 0.82, 0.40), Color(0.45, 0.62, 0.42), Color(0.92, 0.90, 0.84)]
+	for shelf: int in 2:
+		var z: float = low + (high - low) * (0.08 + 0.4 * float(shelf))
+		draw_line(_pv(p, z), _pv(q, z), _tint(Color(0.45, 0.34, 0.26, 0.8)), 1.0)
+		for item: int in 6:
+			var t0: float = (float(item) + 0.15) / 6.0
+			var t1: float = (float(item) + 0.8) / 6.0
+			var tall: float = (high - low) * (0.14 + 0.08 * float((item + shelf) % 3))
+			draw_colored_polygon(PackedVector2Array([_pv(p.lerp(q, t0), z), _pv(p.lerp(q, t1), z), _pv(p.lerp(q, t1), z + tall), _pv(p.lerp(q, t0), z + tall)]),
+					_tint(Color(goods[(item + shelf * 2) % goods.size()], 0.85)))
+
+
+func _draw_foundation(a: Vector2, b: Vector2, store: bool) -> void:
+	var color: Color = Color(0.44, 0.38, 0.35) if store else Color(0.66, 0.64, 0.60)
+	var top: float = (1.0 if store else 1.3) * FOOT
+	var normal: Vector2 = (b - a).normalized().orthogonal()
+	draw_colored_polygon(PackedVector2Array([_pv(a, 0.0), _pv(b, 0.0), _pv(b, top), _pv(a, top)]), _tint(_wall_shade(color, normal)))
+	draw_line(_pv(a, top), _pv(b, top), _tint(color.darkened(0.3)), 1.0)
+
+
+## The two ends of the wall the door is on.
+func _door_wall(building: Dictionary, style: Dictionary) -> Array:
+	var rect: Rect2 = _rect_of(building["footprint"])
+	var out: Vector2 = style["out"]
+	if style["along_x"]:
+		var y: float = rect.position.y if out.y < 0.0 else rect.end.y
+		return [Vector2(rect.position.x, y), Vector2(rect.end.x, y)]
+	var x: float = rect.position.x if out.x < 0.0 else rect.end.x
+	return [Vector2(x, rect.position.y), Vector2(x, rect.end.y)]
+
+
+## A full-width front porch with posts, railings, steps and a shed roof.
+func _draw_porch(building: Dictionary, style: Dictionary, roof: Color) -> void:
+	var wall: Array = _door_wall(building, style)
+	var out: Vector2 = style["out"]
+	var a: Vector2 = wall[0]
+	var b: Vector2 = wall[1]
+	var along: Vector2 = (b - a).normalized()
+	var p: Vector2 = a + along * 0.4 * FOOT
+	var q: Vector2 = b - along * 0.4 * FOOT
+	var deck: float = 1.6 * FOOT
+	var door: Vector2 = Vector2(building["door"][0], building["door"][1])
+	var door_u: float = (door - p).dot(along)
+	var front: Vector2 = out * PORCH_DEPTH
+	_draw_prism([p, q, q + front, p + front], 0.0, deck, Color(0.88, 0.86, 0.80), Color(0.60, 0.54, 0.47))
+	var wood: Color = Color(0.66, 0.60, 0.53)
+	var s0: Vector2 = door - along * 2.4 * FOOT + front
+	var s1: Vector2 = door + along * 2.4 * FOOT + front
+	_draw_prism([s0, s1, s1 + out * 1.2 * FOOT, s0 + out * 1.2 * FOOT], 0.0, deck * 0.66, wood, wood.lightened(0.12))
+	_draw_prism([s0 + out * 1.2 * FOOT, s1 + out * 1.2 * FOOT, s1 + out * 2.4 * FOOT, s0 + out * 2.4 * FOOT], 0.0, deck * 0.33, wood, wood.lightened(0.12))
+	var fp: Vector2 = p + out * (PORCH_DEPTH - 0.4 * FOOT)
+	var fq: Vector2 = q + out * (PORCH_DEPTH - 0.4 * FOOT)
+	var span: float = fp.distance_to(fq)
+	var bays: int = maxi(2, roundi(span / (9.0 * FOOT)))
+	_draw_rail(p + out * 0.2 * FOOT, fp, deck)
+	_draw_rail(q + out * 0.2 * FOOT, fq, deck)
+	for index: int in bays:
+		var u0: float = span * float(index) / float(bays)
+		var u1: float = span * float(index + 1) / float(bays)
+		if door_u > u0 and door_u < u1:
+			if door_u - 2.6 * FOOT > u0:
+				_draw_rail(fp + along * u0, fp + along * (door_u - 2.6 * FOOT), deck)
+			if door_u + 2.6 * FOOT < u1:
+				_draw_rail(fp + along * (door_u + 2.6 * FOOT), fp + along * u1, deck)
+		else:
+			_draw_rail(fp + along * u0, fp + along * u1, deck)
+	var trim: Color = _tint(COLOR_TRIM)
+	var post: float = maxf(1.5, 0.5 * FOOT * _scale)
+	for index: int in bays + 1:
+		var at: Vector2 = fp + along * span * float(index) / float(bays)
+		draw_line(_pv(at, deck), _pv(at, 9.2 * FOOT), trim, post)
+	var rp: Vector2 = a - along * 0.3 * FOOT
+	var rq: Vector2 = b + along * 0.3 * FOOT
+	var reach: Vector2 = out * (PORCH_DEPTH + 0.7 * FOOT)
+	var top: PackedVector2Array = PackedVector2Array([_pv(rp, 10.4 * FOOT), _pv(rq, 10.4 * FOOT), _pv(rq + reach, 9.2 * FOOT), _pv(rp + reach, 9.2 * FOOT)])
+	_face(top, _tint(roof.lightened(0.12)), _tint(roof.darkened(0.35)))
+	if _faces_viewer(out):
+		_face(PackedVector2Array([_pv(rp + reach, 9.2 * FOOT), _pv(rq + reach, 9.2 * FOOT), _pv(rq + reach, 8.5 * FOOT), _pv(rp + reach, 8.5 * FOOT)]), trim, _tint(COLOR_TRIM.darkened(0.3)))
+
+
+## A porch railing: top and bottom rails with balusters when close enough to see.
+func _draw_rail(from: Vector2, to: Vector2, base: float) -> void:
+	var color: Color = _tint(COLOR_TRIM.darkened(0.04))
+	var top: float = base + 2.4 * FOOT
+	if _scale * FOOT >= 1.6:
+		var length: float = from.distance_to(to)
+		var at: float = 0.6 * FOOT
+		while at < length:
+			var point: Vector2 = from.lerp(to, at / length)
+			draw_line(_pv(point, base), _pv(point, top), Color(color, 0.85), 1.0)
+			at += 0.8 * FOOT
+	draw_line(_pv(from, top), _pv(to, top), color, maxf(1.0, 0.28 * FOOT * _scale))
+	draw_line(_pv(from, base + 0.3 * FOOT), _pv(to, base + 0.3 * FOOT), color, 1.0)
+
+
+## Two concrete steps up to the front door.
+func _draw_stoop(building: Dictionary, style: Dictionary) -> void:
+	var out: Vector2 = style["out"]
+	var door: Vector2 = Vector2(building["door"][0], building["door"][1])
+	var along: Vector2 = out.orthogonal()
+	var w: Vector2 = along * 2.4 * FOOT
+	_draw_prism([door - w, door + w, door + w + out * 2.4 * FOOT, door - w + out * 2.4 * FOOT], 0.0, 1.0 * FOOT, COLOR_CONCRETE, COLOR_CONCRETE.lightened(0.12))
+	_draw_prism([door - w + out * 2.4 * FOOT, door + w + out * 2.4 * FOOT, door + w + out * 3.7 * FOOT, door - w + out * 3.7 * FOOT],
+			0.0, 0.5 * FOOT, COLOR_CONCRETE, COLOR_CONCRETE.lightened(0.12))
+
+
+## A three-sided bay window standing out from the ground floor.
+func _draw_bay(id: String, style: Dictionary, siding: Color, roof: Color, lit: bool) -> void:
+	var wall: Array = style["bay_wall"]
+	var a: Vector2 = wall[0]
+	var b: Vector2 = wall[1]
+	var n: Vector2 = wall[2]
+	var along: Vector2 = (b - a).normalized()
+	var c: Vector2 = a + along * float(style["bay_u"])
+	var bl: Vector2 = c - along * 3.6 * FOOT
+	var br: Vector2 = c + along * 3.6 * FOOT
+	var fl: Vector2 = c - along * 2.3 * FOOT + n * 2.2 * FOOT
+	var fr: Vector2 = c + along * 2.3 * FOOT + n * 2.2 * FOOT
+	var base: Array = [bl, fl, fr, br]
+	_draw_prism(base, 0.0, 1.3 * FOOT, Color(0.66, 0.64, 0.60))
+	_draw_prism(base, 1.3 * FOOT, 8.4 * FOOT, siding)
+	var glass: Color = _window_glass(id, lit)
+	var frame: Color = _tint(COLOR_TRIM)
+	for pair: Array in [[bl, fl], [fl, fr], [fr, br]]:
+		var p: Vector2 = pair[0]
+		var q: Vector2 = pair[1]
+		var normal: Vector2 = (q - p).orthogonal().normalized()
+		if normal.dot((p + q) / 2.0 - c) < 0.0:
+			normal = -normal
+		if not _faces_viewer(normal):
+			continue
+		var p2: Vector2 = p.lerp(q, 0.16)
+		var q2: Vector2 = p.lerp(q, 0.84)
+		var pane: PackedVector2Array = PackedVector2Array([_pv(p2, 3.0 * FOOT), _pv(q2, 3.0 * FOOT), _pv(q2, 7.2 * FOOT), _pv(p2, 7.2 * FOOT)])
+		draw_colored_polygon(pane, glass)
+		if _scale * FOOT >= 1.6:
+			_draw_curtains(p2, q2, 3.0 * FOOT, 7.2 * FOOT, style, lit)
+		draw_polyline(_closed(pane), frame, 1.0, true)
+		if lit:
+			draw_circle((pane[0] + pane[2]) / 2.0, 5.0 * _zoom, Color(1.0, 0.85, 0.45, 0.12))
+	var hood: PackedVector2Array = PackedVector2Array([
+		_pv(bl - along * 0.3 * FOOT, 9.8 * FOOT), _pv(fl + n * 0.4 * FOOT - along * 0.3 * FOOT, 8.4 * FOOT),
+		_pv(fr + n * 0.4 * FOOT + along * 0.3 * FOOT, 8.4 * FOOT), _pv(br + along * 0.3 * FOOT, 9.8 * FOOT)])
+	_face(hood, _tint(roof.lightened(0.08)), _tint(roof.darkened(0.35)))
+	draw_line(hood[1], hood[2], frame, maxf(1.0, 0.25 * FOOT * _scale))
+
+
+## A light fascia along the eave, light rakes on the gable end and a lit ridge.
+func _draw_roof_trim(front: PackedVector2Array, front_rake: Array, back_rake: Array, roof: Color) -> void:
+	var trim: Color = _tint(COLOR_TRIM)
+	var width: float = maxf(1.0, 0.32 * FOOT * _scale)
+	draw_line(front[0], front[1], trim, width)
+	draw_line(back_rake[0], back_rake[1], trim, width)
+	draw_line(front_rake[0], front_rake[1], trim, width)
+	draw_line(front[2], front[3], _tint(roof.lightened(0.4)), maxf(1.0, 0.25 * FOOT * _scale))
+
+
+## A point on the front slope of a roof: u along the eave, d in from the wall.
+func _on_slope(frame: Array, u: float, d: float, z: float) -> Vector2:
+	return _pv((frame[0] as Vector2) + (frame[1] as Vector2) * u - (frame[2] as Vector2) * d, z)
+
+
+## A small gabled dormer on the front slope of the roof.
+func _draw_dormer(building: Dictionary, rect: Rect2, h: float, rise: float, siding: Color, roof: Color) -> void:
+	var frame: Array
+	var half_depth: float
+	var u: float
+	if rect.size.y >= rect.size.x:
+		frame = [Vector2(rect.end.x, rect.position.y), Vector2(0, 1), Vector2(1, 0)]
+		half_depth = rect.size.x / 2.0
+		u = rect.size.y * 0.3
+	else:
+		frame = [rect.position, Vector2(1, 0), Vector2(0, -1)]
+		half_depth = rect.size.y / 2.0
+		u = rect.size.x * 0.55
+	var along: Vector2 = frame[1]
+	var out: Vector2 = frame[2]
+	var w: float = 2.6 * FOOT
+	var o: float = 0.5 * FOOT
+	var peak: float = 1.6 * FOOT
+	var d_f: float = half_depth * 0.3
+	var zs: float = h + rise * d_f / half_depth
+	var zt: float = minf(zs + 3.4 * FOOT, h + rise - peak - 0.4 * FOOT)
+	var d_t: float = (zt - h) / rise * half_depth
+	var d_e: float = (zt - 0.3 * FOOT - h) / rise * half_depth
+	var d_p: float = minf(half_depth, (zt + peak - h) / rise * half_depth)
+	var side: float = -1.0 if _faces_viewer(-along) else 1.0
+	var edge: Color = _tint(roof.darkened(0.35))
+	var lit: bool = _night > 0.2 and _anyone_awake(building["id"])
+	_face(PackedVector2Array([_on_slope(frame, u - side * (w + o), d_f - o, zt - 0.3 * FOOT), _on_slope(frame, u, d_f - o, zt + peak),
+			_on_slope(frame, u, d_p, zt + peak), _on_slope(frame, u - side * (w + o), d_e, zt - 0.3 * FOOT)]), _tint(roof.darkened(0.1)), edge)
+	_face(PackedVector2Array([_on_slope(frame, u + side * w, d_f, zs), _on_slope(frame, u + side * w, d_f, zt), _on_slope(frame, u + side * w, d_t, zt)]),
+			_tint(_wall_shade(siding, along * side).darkened(0.06)))
+	_face(PackedVector2Array([_on_slope(frame, u - w, d_f, zs), _on_slope(frame, u + w, d_f, zs), _on_slope(frame, u + w, d_f, zt), _on_slope(frame, u - w, d_f, zt)]),
+			_tint(_wall_shade(siding, out)))
+	var pane: PackedVector2Array = PackedVector2Array([_on_slope(frame, u - 1.3 * FOOT, d_f, zs + 0.5 * FOOT), _on_slope(frame, u + 1.3 * FOOT, d_f, zs + 0.5 * FOOT),
+			_on_slope(frame, u + 1.3 * FOOT, d_f, zt - 0.4 * FOOT), _on_slope(frame, u - 1.3 * FOOT, d_f, zt - 0.4 * FOOT)])
+	draw_colored_polygon(pane, _window_glass(building["id"], lit) if lit else _tint(COLOR_GLASS.darkened(0.1)))
+	draw_polyline(_closed(pane), _tint(COLOR_TRIM), 1.0, true)
+	_face(PackedVector2Array([_on_slope(frame, u - w, d_f, zt), _on_slope(frame, u + w, d_f, zt), _on_slope(frame, u, d_f, zt + peak)]), _tint(_wall_shade(siding, out)))
+	_face(PackedVector2Array([_on_slope(frame, u + side * (w + o), d_f - o, zt - 0.3 * FOOT), _on_slope(frame, u, d_f - o, zt + peak),
+			_on_slope(frame, u, d_p, zt + peak), _on_slope(frame, u + side * (w + o), d_e, zt - 0.3 * FOOT)]), _tint(roof.lightened(0.1)), edge)
+	draw_polyline(PackedVector2Array([_on_slope(frame, u - w - o, d_f - o, zt - 0.3 * FOOT), _on_slope(frame, u, d_f - o, zt + peak),
+			_on_slope(frame, u + w + o, d_f - o, zt - 0.3 * FOOT)]), _tint(COLOR_TRIM), maxf(1.0, 0.28 * FOOT * _scale), true)
+
+
+## A striped awning over the store's front, a bench under it and a round sign.
+func _draw_awning(building: Dictionary, style: Dictionary) -> void:
+	if not style.has("awning_wall"):
+		return
+	var wall: Array = style["awning_wall"]
+	var a: Vector2 = wall[0]
+	var b: Vector2 = wall[1]
+	var n: Vector2 = wall[2]
+	var along: Vector2 = (b - a).normalized()
+	var length: float = a.distance_to(b)
+	var u0: float = 1.2 * FOOT
+	var u1: float = length - 1.2 * FOOT
+	var top: float = 9.6 * FOOT
+	var low: float = 8.0 * FOOT
+	var reach: Vector2 = n * 4.2 * FOOT
+	var drop: float = 0.9 * FOOT
+	draw_colored_polygon(PackedVector2Array([_pv(a + along * u0, top), _pv(a + along * u1, top), _pv(a + along * u1, 6.8 * FOOT), _pv(a + along * u0, 6.8 * FOOT)]),
+			Color(0, 0, 0, 0.12 * (1.0 - _night)))
+	var count: int = maxi(6, int((u1 - u0) / (1.7 * FOOT)))
+	var cream: Color = Color(0.97, 0.94, 0.86)
+	for index: int in count:
+		var wa: Vector2 = a + along * lerpf(u0, u1, float(index) / float(count))
+		var wb: Vector2 = a + along * lerpf(u0, u1, float(index + 1) / float(count))
+		var color: Color = CHERRY if index % 2 == 0 else cream
+		draw_colored_polygon(PackedVector2Array([_pv(wa, top), _pv(wb, top), _pv(wb + reach, low), _pv(wa + reach, low)]), _tint(color))
+		var middle: Vector2 = (wa + wb) / 2.0 + reach
+		draw_colored_polygon(PackedVector2Array([_pv(wa + reach, low), _pv(wb + reach, low), _pv(wb + reach, low - drop * 0.55),
+				_pv(middle, low - drop), _pv(wa + reach, low - drop * 0.55)]), _tint(color.darkened(0.14)))
+	var seam: Color = _tint(CHERRY.darkened(0.4))
+	draw_line(_pv(a + along * u0, top), _pv(a + along * u1, top), seam, 1.0)
+	draw_line(_pv(a + along * u0 + reach, low), _pv(a + along * u1 + reach, low), seam, 1.0)
+	for end: Array in [[u0, -along], [u1, along]]:
+		if _faces_viewer(end[1]):
+			var w: Vector2 = a + along * float(end[0])
+			_face(PackedVector2Array([_pv(w, top), _pv(w + reach, low), _pv(w + reach, low - drop * 0.55), _pv(w, low - drop * 0.55)]), _tint(CHERRY.darkened(0.15)), seam)
+	_draw_bench(a + along * length * 0.62 + n * 5.4 * FOOT, along, n)
+	var sign_at: Vector2 = a + along * (length * 0.18)
+	draw_line(_pv(sign_at, 13.4 * FOOT), _pv(sign_at + n * 1.0 * FOOT, 13.4 * FOOT), _tint(COLOR_OUTLINE), maxf(1.0, 0.2 * FOOT * _scale))
+	_draw_round_sign(sign_at + n * 2.4 * FOOT, 12.4 * FOOT, n, 1.5 * FOOT)
+
+
+## A round enamel-style sign (no lettering) standing out from a wall, drawn
+## in the upright plane through the direction it stands out in.
+func _draw_round_sign(centre: Vector2, z: float, n: Vector2, radius: float) -> void:
+	var x_axis: Vector2 = _iso(centre.x + n.x, centre.y + n.y) - _iso(centre.x, centre.y)
+	draw_set_transform_matrix(Transform2D(x_axis, Vector2(0, _scale), _pv(centre, z)))
+	var cream: Color = _tint(Color(0.97, 0.95, 0.90))
+	draw_circle(Vector2.ZERO, radius, cream)
+	draw_circle(Vector2.ZERO, radius * 0.8, _tint(CHERRY))
+	draw_rect(Rect2(-radius * 0.92, -radius * 0.22, radius * 1.84, radius * 0.44), cream)
+	draw_rect(Rect2(-radius * 0.6, -radius * 0.06, radius * 1.2, radius * 0.12), _tint(Color(0.22, 0.30, 0.42)))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## A park-style bench: iron legs, a slatted seat and back.
+func _draw_bench(c: Vector2, along: Vector2, n: Vector2) -> void:
+	var half: float = 2.8 * FOOT
+	var depth: float = 0.7 * FOOT
+	var wood: Color = Color(0.32, 0.48, 0.36)
+	var iron: Color = _tint(Color(0.18, 0.18, 0.19))
+	var back: Vector2 = c - n * depth
+	_ellipse(_iso(c.x, c.y), half * _scale * 1.1, 0.4, Color(0, 0, 0, 0.12 * (1.0 - _night)))
+	for side: float in [-1.0, 1.0]:
+		draw_line(_pv(back + along * side * half * 0.85, 0.0), _pv(back + along * side * half * 0.85, 3.1 * FOOT), iron, 1.0)
+	for z: float in [2.2 * FOOT, 2.8 * FOOT]:
+		draw_colored_polygon(PackedVector2Array([_pv(back - along * half, z - 0.22 * FOOT), _pv(back + along * half, z - 0.22 * FOOT),
+				_pv(back + along * half, z + 0.15 * FOOT), _pv(back - along * half, z + 0.15 * FOOT)]), _tint(wood.darkened(0.1)))
+	_draw_prism([c - along * half - n * depth, c + along * half - n * depth, c + along * half + n * depth, c - along * half + n * depth],
+			1.35 * FOOT, 1.6 * FOOT, wood, wood.lightened(0.12))
+	for side: float in [-1.0, 1.0]:
+		var leg: Vector2 = c + n * depth * 0.8 + along * side * half * 0.85
+		draw_line(_pv(leg, 0.0), _pv(leg, 1.35 * FOOT), iron, 1.0)
+
+
+# --- Street furniture and yard things -------------------------------------------
+
+func _draw_pole(pole: Dictionary) -> void:
+	var at: Vector2 = Vector2(pole["x"], pole["y"])
+	var across: Vector2 = pole["across"]
+	var wood: Color = _tint(Color(0.42, 0.33, 0.25))
+	var width: float = maxf(1.6, 0.75 * FOOT * _scale)
+	draw_line(_pv(at, 0.0), _pv(at, POLE_HEIGHT), wood, width)
+	draw_line(_pv(at, 0.0) + Vector2(width * 0.25, 0), _pv(at, POLE_HEIGHT) + Vector2(width * 0.25, 0), _tint(Color(0.30, 0.23, 0.18)), width * 0.4)
+	var arm: float = 23.6 * FOOT
+	draw_line(_pv(at - across * 3.2 * FOOT, arm), _pv(at + across * 3.2 * FOOT, arm), wood, maxf(1.2, 0.4 * FOOT * _scale))
+	for offset: float in [-2.7, 0.0, 2.7]:
+		draw_circle(_pv(at + across * offset * FOOT, arm + 0.4 * FOOT), maxf(0.9, 0.28 * FOOT * _scale), _tint(Color(0.55, 0.72, 0.66)))
+	if pole["transformer"]:
+		var top: Vector2 = _pv(at, 21.5 * FOOT) + Vector2(width * 0.5, 0)
+		var size: Vector2 = Vector2(maxf(3.0, 1.5 * FOOT * _scale), maxf(4.0, 2.6 * FOOT * _scale))
+		var grey: Color = _tint(Color(0.56, 0.58, 0.60))
+		draw_rect(Rect2(top, size), grey)
+		draw_rect(Rect2(top + Vector2(size.x * 0.6, 0), Vector2(size.x * 0.4, size.y)), grey.darkened(0.15))
+		_ellipse(top + Vector2(size.x / 2.0, 0), size.x / 2.0, 0.45, grey.lightened(0.15))
+
+
+## One piece of the wires between two poles: three power lines on the
+## crossarm and a telephone line lower down, each sagging between the poles.
+func _draw_wire(wire: Dictionary) -> void:
+	var a: Vector2 = wire["a"]
+	var b: Vector2 = wire["b"]
+	var across: Vector2 = wire["across"]
+	var t0: float = wire["t0"]
+	var t1: float = wire["t1"]
+	var color: Color = Color(_tint(COLOR_WIRE), 0.5)
+	for spec: Array in [[-2.7, 24.0, 1.8], [0.0, 24.0, 1.8], [2.7, 24.0, 1.8], [0.0, 19.6, 2.4]]:
+		var off: Vector2 = across * float(spec[0]) * FOOT
+		var points: PackedVector2Array = PackedVector2Array()
+		for step: int in 4:
+			var t: float = lerpf(t0, t1, float(step) / 3.0)
+			points.append(_pv(a.lerp(b, t) + off, (float(spec[1]) - float(spec[2]) * sin(t * PI)) * FOOT))
+		draw_polyline(points, color, 1.0, true)
+
+
+func _draw_hydrant(hydrant: Dictionary) -> void:
+	var at: Vector2 = Vector2(hydrant["x"], hydrant["y"])
+	var red: Color = _tint(Color(0.80, 0.20, 0.16))
+	var base: Vector2 = _iso(at.x, at.y)
+	var top: Vector2 = _pv(at, 2.3 * FOOT)
+	var w: float = maxf(1.6, 0.5 * FOOT * _scale)
+	_ellipse(base + Vector2(w * 0.6, 0), w * 2.0, 0.4, Color(0, 0, 0, 0.18 * (1.0 - _night)))
+	draw_rect(Rect2(base.x - w * 1.3, base.y - w * 0.7, w * 2.6, w * 0.7), red.darkened(0.25))
+	draw_rect(Rect2(top.x - w, top.y, w * 2.0, base.y - top.y), red)
+	draw_rect(Rect2(top.x + w * 0.25, top.y, w * 0.75, base.y - top.y), red.darkened(0.18))
+	var nozzle: Vector2 = _pv(at, 1.5 * FOOT)
+	draw_circle(nozzle - Vector2(w * 1.2, 0), w * 0.45, red.darkened(0.1))
+	draw_circle(nozzle + Vector2(w * 1.2, 0), w * 0.45, red.darkened(0.25))
+	draw_circle(top, w * 1.05, red.lightened(0.12))
+	draw_circle(top - Vector2(0, w * 0.75), w * 0.4, _tint(Color(0.80, 0.78, 0.72)))
+
+
+func _draw_drain(drain: Dictionary) -> void:
+	var c: Vector2 = Vector2(drain["x"], drain["y"])
+	var along: Vector2 = drain["along"]
+	var inward: Vector2 = drain["inward"]
+	var l: Vector2 = along * 1.5 * FOOT
+	var w: Vector2 = inward * 0.7 * FOOT
+	var grate: PackedVector2Array = PackedVector2Array([_iso(c.x - l.x - w.x, c.y - l.y - w.y), _iso(c.x + l.x - w.x, c.y + l.y - w.y),
+			_iso(c.x + l.x + w.x, c.y + l.y + w.y), _iso(c.x - l.x + w.x, c.y - l.y + w.y)])
+	draw_colored_polygon(grate, _tint(Color(0.21, 0.21, 0.22)))
+	var bar: Color = _tint(Color(0.48, 0.48, 0.49))
+	for index: int in 5:
+		var u: Vector2 = along * (float(index) - 2.0) * 0.55 * FOOT
+		draw_line(_iso(c.x + u.x - w.x, c.y + u.y - w.y), _iso(c.x + u.x + w.x, c.y + u.y + w.y), bar, 1.0)
+	draw_polyline(_closed(grate), bar, 1.0, true)
+
+
+func _draw_can(can: Dictionary) -> void:
+	var at: Vector2 = Vector2(can["x"], can["y"])
+	var base: Vector2 = _iso(at.x, at.y)
+	var top: Vector2 = _pv(at, 2.6 * FOOT)
+	var r: float = maxf(2.0, 1.0 * FOOT * _scale * 1.3)
+	var metal: Color = Color(0.64, 0.66, 0.68)
+	_ellipse(base + Vector2(r * 0.6, 0), r * 1.4, 0.45, Color(0, 0, 0, 0.15 * (1.0 - _night)))
+	_ellipse(base, r, 0.45, _tint(metal.darkened(0.1)))
+	draw_rect(Rect2(top.x - r, top.y, r * 2.0, base.y - top.y), _tint(metal))
+	draw_rect(Rect2(top.x + r * 0.3, top.y, r * 0.7, base.y - top.y), _tint(metal.darkened(0.15)))
+	for f: float in [0.35, 0.7]:
+		var y: float = lerpf(top.y, base.y, f)
+		draw_line(Vector2(top.x - r, y), Vector2(top.x + r, y), _tint(metal.darkened(0.28)), 1.0)
+	_ellipse(top, r * 1.12, 0.45, _tint(metal.lightened(0.14)))
+	draw_line(top + Vector2(-r * 0.35, -r * 0.2), top + Vector2(r * 0.35, -r * 0.2), _tint(metal.darkened(0.4)), 1.0)
+
+
+func _draw_bicycle(bike: Dictionary) -> void:
+	var c: Vector2 = Vector2(bike["x"], bike["y"])
+	var dir: Vector2 = bike["along"]
+	var lean: Vector2 = bike["lean"]
+	var paint: Color = _tint(bike["paint"])
+	var tire: Color = _tint(Color(0.13, 0.13, 0.13))
+	var r: float = 1.15 * FOOT
+	var line: float = maxf(1.0, 0.15 * FOOT * _scale)
+	var tilt: Vector2 = lean * 0.12
+	var hubs: Array[Vector2] = [c - dir * 1.75 * FOOT, c + dir * 1.75 * FOOT]
+	for hub: Vector2 in hubs:
+		var rim: PackedVector2Array = PackedVector2Array()
+		for step: int in 17:
+			var angle: float = TAU * float(step) / 16.0
+			var z: float = r + sin(angle) * r
+			rim.append(_pv(hub + dir * cos(angle) * r + tilt * z, z))
+		draw_polyline(rim, tire, maxf(1.0, 0.2 * FOOT * _scale), true)
+	var crank: Vector2 = _pv(c - dir * 0.15 * FOOT + tilt * FOOT, FOOT)
+	var seat: Vector2 = _pv(c - dir * 0.55 * FOOT + tilt * 3.0 * FOOT, 3.0 * FOOT)
+	var head: Vector2 = _pv(c + dir * 1.1 * FOOT + tilt * 3.1 * FOOT, 3.1 * FOOT)
+	var rear: Vector2 = _pv(hubs[0] + tilt * r, r)
+	var front: Vector2 = _pv(hubs[1] + tilt * r, r)
+	draw_polyline(PackedVector2Array([rear, crank, seat, rear]), paint, line, true)
+	draw_polyline(PackedVector2Array([crank, head, seat]), paint, line, true)
+	draw_line(head, front, paint, line)
+	draw_line(seat + Vector2(-2.0, -1.0), seat + Vector2(2.5, -1.0), tire, maxf(1.5, line * 1.4))
+	var bar: Vector2 = dir.orthogonal() * 0.8 * FOOT
+	var grip: float = 3.5 * FOOT
+	draw_line(_pv(c + dir * 1.1 * FOOT + tilt * grip - bar, grip), _pv(c + dir * 1.1 * FOOT + tilt * grip + bar, grip), tire, line)
+
+
+func _draw_wagon(wagon: Dictionary) -> void:
+	var c: Vector2 = Vector2(wagon["x"], wagon["y"])
+	var dir: Vector2 = (wagon["along"] as Vector2).normalized()
+	var side: Vector2 = dir.orthogonal()
+	var red: Color = Color(0.78, 0.20, 0.16)
+	var wheel: Color = _tint(Color(0.15, 0.15, 0.15))
+	_ellipse(_iso(c.x, c.y), 2.2 * FOOT * _scale * 1.3, 0.45, Color(0, 0, 0, 0.14 * (1.0 - _night)))
+	for u: float in [-1.1, 1.1]:
+		for v: float in [-0.95, 0.95]:
+			draw_circle(_pv(c + dir * u * FOOT + side * v * FOOT, 0.35 * FOOT), maxf(1.2, 0.36 * FOOT * _scale), wheel)
+	var hl: Vector2 = dir * 1.6 * FOOT
+	var hw: Vector2 = side * 0.85 * FOOT
+	_draw_prism([c - hl - hw, c + hl - hw, c + hl + hw, c - hl + hw], 0.5 * FOOT, 1.2 * FOOT, red, red.darkened(0.4))
+	var handle: Vector2 = c + hl + dir * 2.4 * FOOT
+	draw_line(_pv(c + hl, 0.8 * FOOT), _pv(handle, 0.3 * FOOT), wheel, 1.0)
+	draw_line(_pv(handle - side * 0.4 * FOOT, 0.3 * FOOT), _pv(handle + side * 0.4 * FOOT, 0.3 * FOOT), wheel, 1.0)
+
+
+func _draw_tulips(row: Dictionary) -> void:
+	var a: Vector2 = row["a"]
+	var b: Vector2 = row["b"]
+	_draw_strip(a, b, 1.5 * FOOT, _tint(Color(0.45, 0.34, 0.25)))
+	var colors: Array = row["colors"]
+	var r: float = clampf(0.42 * FOOT * _scale, 1.1, 3.4)
+	var stem: Color = _tint(Color(0.30, 0.52, 0.26))
+	for index: int in colors.size():
+		var p: Vector2 = a.lerp(b, (float(index) + 0.5) / float(colors.size()))
+		var base: Vector2 = _iso(p.x, p.y)
+		var top: Vector2 = _pv(p, 1.3 * FOOT)
+		draw_line(base, top, stem, maxf(1.0, r * 0.35))
+		draw_line(base, base + Vector2(-r * 0.9, -r * 1.3), stem, maxf(1.0, r * 0.45))
+		draw_colored_polygon(PackedVector2Array([top + Vector2(-r, -r * 0.9), top + Vector2(-r * 0.35, -r * 0.4), top + Vector2(0, -r * 1.1),
+				top + Vector2(r * 0.35, -r * 0.4), top + Vector2(r, -r * 0.9), top + Vector2(r * 0.8, r * 0.3), top + Vector2(0, r * 0.6),
+				top + Vector2(-r * 0.8, r * 0.3)]), _tint(colors[index]))
+
+
+# --- Ground, haze and light over everything -------------------------------------
+
+func _draw_lawn_texture() -> void:
+	var stripe: Color = _tint(Color(0.86, 0.95, 0.66, 0.08))
+	for band: Array in _stripes:
+		var p: Vector2 = band[0]
+		var q: Vector2 = band[1]
+		draw_colored_polygon(PackedVector2Array([_iso(p.x, p.y), _iso(q.x, p.y), _iso(q.x, q.y), _iso(p.x, q.y)]), stripe)
+	for patch: Dictionary in _patches:
+		var at: Vector2 = _iso(patch["x"], patch["y"])
+		var radius: float = float(patch["r"]) * _scale * 1.4
+		if at.x < -radius or at.x > VIEW_SIZE.x + radius or at.y < -radius or at.y > VIEW_SIZE.y + radius:
+			continue
+		var color: Color = _tint(Color(patch["color"], 0.05))
+		for ring: int in 3:
+			_ellipse(at, radius * (1.0 - 0.3 * float(ring)), 0.5, color)
+
+
+## Lamplight catching the wet-looking street at night: a few faint twinkles.
+func _draw_glints() -> void:
+	if _night < 0.4:
+		return
+	var strength: float = (_night - 0.4) / 0.6
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	for glint: Dictionary in _glints:
+		var twinkle: float = 0.5 + 0.5 * sin(now * 2.1 + float(glint["phase"]))
+		twinkle = twinkle * twinkle * twinkle
+		var at: Vector2 = _iso(glint["x"], glint["y"])
+		var r: float = (1.2 + 2.0 * twinkle) * sqrt(_zoom)
+		var color: Color = Color(1.0, 0.93, 0.74, 0.7 * twinkle * strength)
+		draw_line(at - Vector2(r, 0), at + Vector2(r, 0), color, 1.0)
+		draw_line(at - Vector2(0, r * 0.6), at + Vector2(0, r * 0.6), color, 1.0)
+
+
+func _rect_corners(rect: Rect2) -> Array[Vector2]:
+	return [_iso(rect.position.x, rect.position.y), _iso(rect.end.x, rect.position.y), _iso(rect.end.x, rect.end.y), _iso(rect.position.x, rect.end.y)]
+
+
+## Beyond the lots the ground fades into a soft, hazy distance, so the world
+## does not stop at a hard edge.
+func _draw_haze() -> void:
+	var haze: Color = _tint(COLOR_HAZE)
+	var rings: Array = [
+		[_rect_corners(_lot_bounds.grow(24.0 * FOOT)), Color(haze, 0.0)],
+		[_rect_corners(_lot_bounds.grow(70.0 * FOOT)), Color(haze, 0.32)],
+		[_rect_corners(_lot_bounds.grow(130.0 * FOOT)), Color(haze, 0.88)],
+		[_rect_corners(_lot_bounds.grow(6000.0 * FOOT)), Color(haze, 0.88)],
+	]
+	for ring: int in rings.size() - 1:
+		var inner: Array[Vector2] = rings[ring][0]
+		var outer: Array[Vector2] = rings[ring + 1][0]
+		var c0: Color = rings[ring][1]
+		var c1: Color = rings[ring + 1][1]
+		for i: int in 4:
+			var j: int = (i + 1) % 4
+			draw_polygon(PackedVector2Array([inner[i], inner[j], outer[j], outer[i]]), PackedColorArray([c0, c0, c1, c1]))
+
+
+## Low warm sunlight washing in from the sun's side at the start and end of the day.
+func _draw_golden_light() -> void:
+	var strength: float = _golden * (1.0 - _night)
+	if strength < 0.02:
+		return
+	var sun: Vector2 = Vector2(-1.0, -0.5).normalized() if simulation.clock.minute_of_day > 750 else Vector2(1.0, 0.5).normalized()
+	var centre: Vector2 = MAP_RECT.get_center()
+	var corners: PackedVector2Array = PackedVector2Array([Vector2.ZERO, Vector2(VIEW_SIZE.x, 0), VIEW_SIZE, Vector2(0, VIEW_SIZE.y)])
+	var colors: PackedColorArray = PackedColorArray()
+	for corner: Vector2 in corners:
+		var t: float = clampf((corner - centre).normalized().dot(sun) * 0.5 + 0.5, 0.0, 1.0)
+		colors.append(Color(1.0, 0.70, 0.36, strength * (0.03 + 0.22 * t * t)))
+	draw_polygon(corners, colors)
+
+
+## A soft darkening toward the edges of the map, like an old photograph.
+func _draw_vignette() -> void:
+	var outer: Rect2 = MAP_RECT.grow(22.0)
+	var inner: Rect2 = MAP_RECT.grow(-70.0)
+	var edge: Color = Color(0.06, 0.08, 0.10, 0.22 + 0.10 * _night)
+	var none: Color = Color(edge, 0.0)
+	var o: Array[Vector2] = [outer.position, Vector2(outer.end.x, outer.position.y), outer.end, Vector2(outer.position.x, outer.end.y)]
+	var n: Array[Vector2] = [inner.position, Vector2(inner.end.x, inner.position.y), inner.end, Vector2(inner.position.x, inner.end.y)]
+	for i: int in 4:
+		var j: int = (i + 1) % 4
+		draw_polygon(PackedVector2Array([n[i], n[j], o[j], o[i]]), PackedColorArray([none, none, edge, edge]))
+	draw_rect(Rect2(0, 0, VIEW_SIZE.x, outer.position.y), edge)
+	draw_rect(Rect2(0, outer.end.y, VIEW_SIZE.x, VIEW_SIZE.y - outer.end.y), edge)
+	draw_rect(Rect2(0, outer.position.y, outer.position.x, outer.size.y), edge)
+	draw_rect(Rect2(outer.end.x, outer.position.y, VIEW_SIZE.x - outer.end.x, outer.size.y), edge)
+
+
 # --- Trees, shrubs, lamps, cars, fences ----------------------------------------
 
 func _draw_tree(tree: Dictionary) -> void:
@@ -1176,6 +2156,20 @@ func _draw_tree(tree: Dictionary) -> void:
 				dark.lightened(0.08 * float(layer)))
 		return
 	var centre: Vector2 = at - Vector2(0, size * 1.45)
+	var blossom: int = tree.get("blossom", -1)
+	if _spring and blossom >= 0:
+		# A flowering tree in bloom: a soft pink or white crown scattered with petals.
+		var bloom: Color = BLOSSOMS[blossom]
+		draw_circle(centre + Vector2(size * 0.15, size * 0.12), size, _tint(bloom.darkened(0.22)))
+		draw_circle(centre - Vector2(size * 0.35, size * 0.05), size * 0.72, _tint(bloom.darkened(0.10)))
+		draw_circle(centre + Vector2(size * 0.32, -size * 0.18), size * 0.68, _tint(bloom))
+		draw_circle(centre - Vector2(size * 0.08, size * 0.42), size * 0.55, _tint(bloom.lightened(0.10)))
+		for speck: Vector2 in tree["specks"]:
+			draw_circle(centre + speck * size * 0.8, maxf(0.8, size * 0.07), _tint(bloom.lightened(0.35) if speck.y < 0.0 else bloom.darkened(0.3)))
+		# A few petals fallen on the grass beneath.
+		for speck: Vector2 in tree["specks"]:
+			draw_circle(at + Vector2(speck.x * size * 1.1, speck.y * size * 0.35 + size * 0.1), maxf(0.7, size * 0.04), _tint(Color(bloom, 0.8)))
+		return
 	draw_circle(centre + Vector2(size * 0.15, size * 0.12), size, _tint(leaf.darkened(0.25)))
 	draw_circle(centre - Vector2(size * 0.35, size * 0.05), size * 0.72, _tint(leaf.darkened(0.08)))
 	draw_circle(centre + Vector2(size * 0.32, -size * 0.18), size * 0.68, _tint(leaf))
