@@ -9,7 +9,7 @@ Rules for this file:
 - A proposal becomes confirmed only when Derek says so. It then gets a new D-number; the proposal row stays, pointing to it.
 - Each entry has an ID, a date and a source. Longer reasoning lives in the linked doc.
 
-Last updated: 2026-11-15 (M1 accepted by Derek; P-016 to P-022 confirmed; polish pass M1-P authorized)
+Last updated: 2026-11-15 (M1-P: working look confirmed; "things to try this week" authorized)
 
 ## Confirmed
 
@@ -109,6 +109,8 @@ Last updated: 2026-11-15 (M1 accepted by Derek; P-016 to P-022 confirmed; polish
 | D-055 | 2026-11-15 | **One saved game in the per-user data folder, for now.** From P-022. Q-016 stays open for exported builds. | Derek |
 | D-056 | 2026-11-15 | **Pacing answers from the M1 judgment:** relationships grow at an acceptable pace (pacing question 1), and the first week's lack of rent stays as it is (question 6). Neither is to be changed without Derek. The other pacing questions in `docs/M1_PLAYTEST.md` §3 remain open as observations. | Derek |
 | D-057 | 2026-11-15 | **Polish pass (M1-P) authorized before M2:** keep iterating on playability, graphics, look and feel so the week feels like a well-polished, fun game. Still on Fixture Street; no M2 systems (fast-forward detail levels, life events, goals). Working scope and art approach are proposal P-023. | Derek |
+| D-058 | 2026-11-15 | **The M1-P working look and scope are accepted.** Derek: "I am happy with the new look and feel. Continue on with those types of stylistic changes." From P-023: presentation first; the look drawn in code, with no bundled images or fonts; invented decorations chosen from IDs and never stored in simulation state; no M2 systems. Final art direction (Q-008) stays open. | Derek |
+| D-059 | 2026-11-15 | **"Things to try this week" is authorized within M1-P:** a short list of suggestions for the player's household each week, worked out read-only from the event log and current state, like the other reports (D-054). It gives prompts and ticks them off; it adds no state, rewards or resident goals (those remain M2). | Derek |
 
 ## Proposals
 
@@ -116,7 +118,6 @@ None is a confirmed decision until Derek confirms it.
 
 | ID | Proposal | Status |
 |---|---|---|
-| P-023 | **Scope and approach of the M1-P polish pass.** (a) Presentation first: drawing, interface, sound and controls change freely; the simulation core changes only when playability needs it, each such change recorded and tested, and no M2 system is built. (b) The working look is a warm mid-century palette drawn entirely in code (gabled houses with windows and doors, sidewalks, trees, small figures, a softer day-and-night cycle) with no bundled images or fonts, so nothing needs a licence (Q-011). Decorations such as trees, fences and paint colors are invented, presentation-only and chosen deterministically from IDs, never stored in simulation state. Final art direction (Q-008) stays open. | Proposed 2026-11-15; awaiting Derek |
 
 ### Closed proposals
 
@@ -145,6 +146,7 @@ Kept so that older references resolve.
 | P-020 | Detail levels agree exactly only on what the calendar drives | Confirmed as D-053 |
 | P-021 | Reports are read-only code in `game/sim/reports/` | Confirmed as D-054 |
 | P-022 | One saved game, in the per-user data folder, for now | Confirmed as D-055 |
+| P-023 | Scope and working look of the M1-P polish pass | Confirmed as D-058 |
 | P-013 | Original: "Interiors are openly fictional… room layouts are typical-of-type designs marked `fictional`." Revised (rev. 1): modular fictional floor plans matched to documented exterior building types, kept distinct from verified exteriors | Revised wording confirmed as D-032 |
 
 ## Open questions
@@ -194,3 +196,4 @@ Kept so that older references resolve.
 | 2026-11-15 | M1-B steps 1 to 10 implemented on the fictional fixture and committed one step at a time. Lasting choices made on the way are recorded as proposals P-016 to P-022, not as decisions. Step 11 (week playtest write-up and the M1 judgment) and the documentation reconciliation are outstanding; see `docs/HANDOFF.md`. |
 | 2026-11-15 | No new decisions. Documents reconciled with what M1-B built. Pacing observations from unattended runs written up in `docs/M1_PLAYTEST.md` and linked from Q-004; the M1 judgment there is left for Derek. P-016 to P-022 still await him. |
 | 2026-11-15 | Derek accepted M1 (D-048), confirmed P-016 to P-022 as D-049 to D-055, answered pacing questions 1 and 6 (D-056) and authorized a polish pass, M1-P (D-057). P-023 proposes its scope and working look. Q-008 updated. |
+| 2026-11-15 | Derek accepted the new look (P-023 confirmed as D-058) and authorized "things to try this week" (D-059). |
