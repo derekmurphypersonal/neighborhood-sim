@@ -23,6 +23,8 @@ const HudArt := preload("res://view/hud_art.gd")
 const WeekPaper := preload("res://view/week_paper.gd")
 const WeekSummary := preload("res://sim/reports/week_summary.gd")
 const WorldView := preload("res://view/world_view.gd")
+const BuildingPage := preload("res://view/building_page.gd")
+const Tips := preload("res://view/tips.gd")
 
 const SPEED_LABELS: Array[String] = ["Pause", "1 min/s", "10 min/s", "1 hour/s"]
 ## Keyboard shortcuts as handled in main.gd's _unhandled_key_input.
@@ -40,6 +42,16 @@ const FEED_LINES: int = 7
 ## How long a new line in the feed stays highlighted, in real milliseconds.
 const FEED_FRESH_MS: int = 5000
 const NEED_LABELS: Dictionary = {"hunger": "Fed", "rest": "Rested", "company": "Company", "fun": "Fun"}
+## What fills each need, as sim/systems/needs.gd has it.
+const NEED_TIPS: Dictionary = {
+	"hunger": "Fed: falls all day, more slowly asleep.\nFilled by a meal at home, if there is food in the pantry.",
+	"rest": "Rested: falls while awake.\nFilled by sleeping at home.",
+	"company": "Company: falls when alone.\nFilled by talking with someone from another household.",
+	"fun": "Fun: falls while awake, except at work or school.\nFilled by a pastime at home, playing outside (children),\nlooking around the store, and a little by talking.",
+}
+## Width kept free at the left of the selected member's tab for a portrait.
+const TAB_FACE: float = 20.0
+const TAB_FACE_PAD: String = "      "
 ## Need levels, in percent, at which a bar turns amber and then red.
 const NEED_GOOD_PERCENT: int = 60
 const NEED_LOW_PERCENT: int = 30
@@ -139,6 +151,15 @@ var _goals: Array = []
 var _goal_seen: Dictionary = {}
 var _goal_shine: Dictionary = {}
 var _sheet_content: VBoxContainer
+## The first-time tips; main.gd offers them and keeps the list of those seen.
+var tips: Tips
+## person id -> the small portrait on that member's tab, shown when selected
+var _member_faces: Dictionary = {}
+var _member_tips: Dictionary = {}
+var _tab_selected: String = ""
+var _tab_face_kind: String = ""
+var _neighbor_scroll: ScrollContainer
+var _hover_neighbor: String = ""
 
 
 func setup(sim: Simulation) -> void:
@@ -151,6 +172,8 @@ func setup(sim: Simulation) -> void:
 	_build_side_panel()
 	_build_feed()
 	_build_goals()
+	tips = Tips.new()
+	add_child(tips)
 	_build_sheet()
 
 
@@ -243,6 +266,10 @@ static func _make_theme() -> Theme:
 	t.set_stylebox("panel", "RowA", _box(PAPER_ROW, 5, 8, 3))
 	t.set_type_variation("RowB", "PanelContainer")
 	t.set_stylebox("panel", "RowB", _box(Color(PAPER_ROW, 0.0), 5, 8, 3))
+
+	t.set_type_variation("RowHover", "PanelContainer")
+	var hover_row: StyleBoxFlat = _with_border(_box(Color("#F3DDA0"), 5, 8, 3), Color(MUSTARD, 0.75), 1)
+	t.set_stylebox("panel", "RowHover", hover_row)
 
 	t.set_type_variation("TopBar", "PanelContainer")
 	var bar: StyleBoxFlat = _with_shadow(_box(TEAL, 0, 20, 6), 8)
@@ -448,10 +475,20 @@ func _build_side_panel() -> void:
 		button.pressed.connect(func() -> void: person_chosen.emit(person_id))
 		members.add_child(button)
 		_member_buttons[person_id] = button
+		# A tiny portrait at the left of the tab, shown while it is selected.
+		var tab_face: Control = Control.new()
+		tab_face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tab_face.size = Vector2(TAB_FACE, TAB_FACE)
+		tab_face.position = Vector2(7, 3)
+		tab_face.visible = false
+		tab_face.draw.connect(func() -> void: _draw_tab_face(tab_face, person_id))
+		button.add_child(tab_face)
+		_member_faces[person_id] = tab_face
 
 	# The person card: a portrait as on the street, name and age, mood, doing.
 	var card: PanelContainer = PanelContainer.new()
 	card.theme_type_variation = "PersonCard"
+	card.tooltip_text = "The selected person: name, age and traits, how they seem, and what they are doing.\nMood follows their lowest need. Press F to follow them on the street."
 	column.add_child(card)
 	var card_row: HBoxContainer = HBoxContainer.new()
 	card_row.add_theme_constant_override("separation", 10)
@@ -459,6 +496,7 @@ func _build_side_panel() -> void:
 	_portrait = Control.new()
 	_portrait.custom_minimum_size = Vector2(60, 60)
 	_portrait.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_portrait.draw.connect(_draw_portrait)
 	card_row.add_child(_portrait)
 	var about: VBoxContainer = VBoxContainer.new()
@@ -471,6 +509,7 @@ func _build_side_panel() -> void:
 	_selected_label.scroll_active = false
 	_selected_label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_selected_label.clip_contents = true
+	_selected_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_selected_label.add_theme_font_size_override("normal_font_size", 12)
 	_selected_label.add_theme_font_size_override("bold_font_size", 17)
 	about.add_child(_selected_label)
@@ -480,6 +519,7 @@ func _build_side_panel() -> void:
 	_mood_face = Control.new()
 	_mood_face.custom_minimum_size = Vector2(16, 16)
 	_mood_face.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_mood_face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_mood_face.draw.connect(func() -> void: HudArt.face(_mood_face, _mood_face.size / 2.0, 7.0, _shown_face, true))
 	mood.add_child(_mood_face)
 	_mood_label = Label.new()
@@ -495,9 +535,12 @@ func _build_side_panel() -> void:
 	for need_name: String in Records.NEED_NAMES:
 		var row: HBoxContainer = HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
+		row.mouse_filter = Control.MOUSE_FILTER_STOP
+		row.tooltip_text = NEED_TIPS[need_name]
 		var icon: Control = Control.new()
 		icon.custom_minimum_size = Vector2(16, 16)
 		icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		icon.draw.connect(func() -> void: HudArt.need_icon(icon, icon.size / 2.0, need_name, TEAL, PAPER))
 		row.add_child(icon)
 		var label: Label = Label.new()
@@ -511,6 +554,7 @@ func _build_side_panel() -> void:
 		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		bar.custom_minimum_size = Vector2(0, 11)
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(bar)
 		var value: Label = Label.new()
 		value.custom_minimum_size = Vector2(36, 0)
@@ -530,10 +574,11 @@ func _build_side_panel() -> void:
 	_money_label.scroll_active = false
 	_money_label.add_theme_font_size_override("normal_font_size", 12)
 	_money_label.add_theme_font_size_override("bold_font_size", 12)
+	_money_label.tooltip_text = "Money the household has now and the meals in its pantry.\nRent is taken on Monday; wages for the days worked are paid on Friday."
 	column.add_child(_money_label)
 	_ledger = Control.new()
 	_ledger.custom_minimum_size = Vector2(0, 54)
-	_ledger.tooltip_text = "Money in and out this week, from the week's events"
+	_ledger.tooltip_text = "Money in and out since Monday, counted from the week's events.\n\"This week\" in the top bar has the whole story."
 	_ledger.draw.connect(_draw_ledger)
 	column.add_child(_ledger)
 
@@ -546,12 +591,15 @@ func _build_side_panel() -> void:
 	neighbors_title.add_child(gap)
 	var key: Label = _caption("bars: yours, then theirs")
 	key.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	key.mouse_filter = Control.MOUSE_FILTER_STOP
+	key.tooltip_text = "Each neighbor has two small bars: what your selected person thinks of them (top)\nand what they think back (bottom). Green grows right for warm, red left for cool."
 	neighbors_title.add_child(key)
 	# The list scrolls, so a long street never pushes anything off the panel.
 	var scroll: ScrollContainer = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	column.add_child(scroll)
+	_neighbor_scroll = scroll
 	_neighbor_list = VBoxContainer.new()
 	_neighbor_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_neighbor_list.add_theme_constant_override("separation", 1)
@@ -596,10 +644,12 @@ func _neighbor_row(person_id: String) -> PanelContainer:
 	talk.theme_type_variation = "RowButton"
 	talk.text = "Talk"
 	talk.focus_mode = Control.FOCUS_NONE
-	talk.tooltip_text = "Send the selected member of your household to talk to %s" % person["given_name"]
 	talk.pressed.connect(func() -> void: _talk_pressed(person_id))
 	row.add_child(talk)
-	var entry: Dictionary = {"panel": shaded, "name": name, "word": word, "meter": meter, "mine": 0, "theirs": 0, "met": false, "talks": -1}
+	var entry: Dictionary = {
+		"panel": shaded, "name": name, "word": word, "meter": meter, "mine": 0, "theirs": 0, "met": false, "talks": -1,
+		"week_talks": -1, "talk": talk, "talk_tip": "",
+	}
 	meter.draw.connect(func() -> void:
 		HudArt.regard_meter(meter, Rect2(Vector2(0, 0), meter.size), entry["mine"], entry["theirs"], entry["met"], REGARD_METER_SPAN))
 	_neighbor_rows[person_id] = entry
@@ -608,7 +658,85 @@ func _neighbor_row(person_id: String) -> PanelContainer:
 
 func _restripe_neighbors() -> void:
 	for index: int in _neighbor_order.size():
-		(_neighbor_rows[_neighbor_order[index]]["panel"] as PanelContainer).theme_type_variation = "RowA" if index % 2 == 0 else "RowB"
+		var person_id: String = _neighbor_order[index]
+		var variation: String = "RowA" if index % 2 == 0 else "RowB"
+		(_neighbor_rows[person_id]["panel"] as PanelContainer).theme_type_variation = "RowHover" if person_id == _hover_neighbor else variation
+
+
+## Lights the neighbor row under the pointer. Worked out from the pointer's
+## position, so it is right while the list scrolls or re-sorts.
+func _refresh_neighbor_hover() -> void:
+	var pointer: Vector2 = get_global_mouse_position()
+	var over: String = ""
+	if not _sheet_open and _neighbor_scroll.get_global_rect().has_point(pointer):
+		for person_id: String in _neighbor_rows:
+			if (_neighbor_rows[person_id]["panel"] as Control).get_global_rect().has_point(pointer):
+				over = person_id
+				break
+	if over != _hover_neighbor:
+		_hover_neighbor = over
+		_restripe_neighbors()
+
+
+## Talk needs one of the player's household selected and the neighbor on the
+## street; otherwise the button is greyed and its tooltip says why.
+func _refresh_talk_buttons(selected_id: String) -> void:
+	var can_order: bool = _player_ids.has(selected_id)
+	var selected_name: String = simulation.state.people[selected_id]["given_name"]
+	for other_id: String in _neighbor_rows:
+		var entry: Dictionary = _neighbor_rows[other_id]
+		var other: Dictionary = simulation.state.people[other_id]
+		var tip: String = "Send %s to talk to %s" % [selected_name, other["given_name"]]
+		var allowed: bool = true
+		if not can_order:
+			tip = "Select one of your household first (the tabs above, or click them on the street)"
+			allowed = false
+		elif other["at"] == Records.AT_OFFMAP:
+			tip = "%s is away from the street just now" % other["given_name"]
+			allowed = false
+		if tip != entry["talk_tip"]:
+			entry["talk_tip"] = tip
+			var talk: Button = entry["talk"]
+			talk.tooltip_text = tip
+			talk.disabled = not allowed
+
+
+func _draw_tab_face(face_control: Control, person_id: String) -> void:
+	var person: Dictionary = simulation.state.people[person_id]
+	var child: bool = SimDate.age_on(person["birth_day"], simulation.clock.day_index) < WorldView.CHILD_AGE
+	HudArt.portrait(face_control, Rect2(Vector2.ZERO, face_control.size), person_id, true, child, Describe.mood(person)["face"])
+
+
+## Tabs: the selected one is lit and carries a tiny portrait; each tab's
+## tooltip says who it is and what they are doing.
+func _refresh_tabs(selected_id: String) -> void:
+	for person_id: String in _member_buttons:
+		var button: Button = _member_buttons[person_id]
+		var person: Dictionary = simulation.state.people[person_id]
+		var chosen: bool = person_id == selected_id
+		button.set_pressed_no_signal(chosen)
+		var tip: String = "%s %s, age %d: %s.%s" % [
+			person["given_name"], person["family_name"], SimDate.age_on(person["birth_day"], simulation.clock.day_index),
+			Describe.activity(simulation, person),
+			"" if chosen else "\nClick to select.",
+		]
+		if tip != _member_tips.get(person_id, ""):
+			_member_tips[person_id] = tip
+			button.tooltip_text = tip
+		(_member_faces[person_id] as Control).position.y = maxf(roundf((button.size.y - TAB_FACE) / 2.0) - 1.0, 1.0)
+	var face_kind: String = Describe.mood(simulation.state.people[selected_id])["face"] if _member_faces.has(selected_id) else ""
+	if selected_id == _tab_selected and face_kind == _tab_face_kind:
+		return
+	_tab_selected = selected_id
+	_tab_face_kind = face_kind
+	for person_id: String in _member_buttons:
+		var chosen: bool = person_id == selected_id
+		var button: Button = _member_buttons[person_id]
+		var given: String = simulation.state.people[person_id]["given_name"]
+		button.text = TAB_FACE_PAD + given if chosen else given
+		var face_control: Control = _member_faces[person_id]
+		face_control.visible = chosen
+		face_control.queue_redraw()
 
 
 func _build_feed() -> void:
@@ -629,7 +757,8 @@ func _build_feed() -> void:
 		var row: Control = Control.new()
 		row.custom_minimum_size = Vector2(0, FEED_ROW_HEIGHT)
 		row.clip_contents = true
-		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# Takes the pointer only to show a line's full text when it is cut short.
+		row.mouse_filter = Control.MOUSE_FILTER_STOP
 		var text: RichTextLabel = RichTextLabel.new()
 		text.bbcode_enabled = true
 		text.scroll_active = false
@@ -795,7 +924,8 @@ func _build_sheet() -> void:
 	column.add_child(_sheet_buttons)
 
 
-## Shows the sheet. actions is a list of [label, Callable] for extra buttons;
+## Shows the sheet. actions is a list of [label, Callable] or
+## [label, Callable, tooltip] for extra buttons;
 ## a button to close the sheet is always added.
 ## content, if given, is shown in place of the text.
 func show_sheet(title: String, text: String, actions: Array = [], close_label: String = "Continue", content: Control = null) -> void:
@@ -812,7 +942,10 @@ func show_sheet(title: String, text: String, actions: Array = [], close_label: S
 		_sheet_buttons.remove_child(child)
 		child.queue_free()
 	for action: Array in actions:
-		_sheet_buttons.add_child(_button(action[0], action[1]))
+		var action_button: Button = _button(action[0], action[1])
+		if action.size() > 2:
+			action_button.tooltip_text = action[2]
+		_sheet_buttons.add_child(action_button)
 	var close: Button = _button(close_label, close_sheet)
 	close.tooltip_text = "Esc"
 	_sheet_buttons.add_child(close)
@@ -951,12 +1084,14 @@ func refresh(selected_id: String, speed_index: int, music_on: bool, sound_on: bo
 	_music_button.text = "Music on" if music_on else "Music off"
 	_sound_button.set_pressed_no_signal(sound_on)
 	_sound_button.text = "Sounds on" if sound_on else "Sounds off"
-	for person_id: String in _member_buttons:
-		(_member_buttons[person_id] as Button).set_pressed_no_signal(person_id == selected_id)
+	_refresh_tabs(selected_id)
+	tips.set_blocked(_sheet_open)
 
 	_refresh_person(selected_id)
-	_refresh_neighbors(selected_id)
 	_refresh_money()
+	_refresh_neighbors(selected_id)
+	_refresh_talk_buttons(selected_id)
+	_refresh_neighbor_hover()
 	_refresh_feed()
 	_refresh_goal_shine()
 
@@ -1024,6 +1159,9 @@ func _refresh_neighbors(selected_id: String) -> void:
 	var viewer: String = selected_id if _player_ids.has(selected_id) else _player_ids[0]
 	var viewer_name: String = simulation.state.people[viewer]["given_name"]
 	var warmth: Dictionary = {}
+	var week_talks_by_pair: Dictionary = {}
+	for pair: Dictionary in _week_summary.get("neighbors", []):
+		week_talks_by_pair[str(pair["member_id"]) + "|" + str(pair["other_id"])] = int(pair["talks"])
 	for other_id: String in _neighbor_rows:
 		var entry: Dictionary = _neighbor_rows[other_id]
 		var other: Dictionary = simulation.state.people[other_id]
@@ -1033,8 +1171,10 @@ func _refresh_neighbors(selected_id: String) -> void:
 		var theirs: int = simulation.state.regard(other_id, viewer) if met else 0
 		var talks: int = int(simulation.state.relationships[key]["familiarity"]) if met else 0
 		warmth[other_id] = mine + theirs
-		if met == entry["met"] and mine == entry["mine"] and theirs == entry["theirs"] and talks == entry["talks"]:
+		var week_talks: int = week_talks_by_pair.get(viewer + "|" + other_id, 0)
+		if met == entry["met"] and mine == entry["mine"] and theirs == entry["theirs"] and talks == entry["talks"] and week_talks == entry["week_talks"]:
 			continue
+		entry["week_talks"] = week_talks
 		entry["met"] = met
 		entry["mine"] = mine
 		entry["theirs"] = theirs
@@ -1046,12 +1186,13 @@ func _refresh_neighbors(selected_id: String) -> void:
 		(entry["name"] as Label).add_theme_color_override("font_color", INK if met else INK_SOFT)
 		var panel: PanelContainer = entry["panel"]
 		if met:
-			panel.tooltip_text = "%s thinks %+d of %s; %s thinks %+d of %s. %d %s." % [
+			panel.tooltip_text = "%s and %s: %s.\n%s thinks %+d of %s; %s thinks %+d of %s.\n%d %s this week, %d in all." % [
+				viewer_name, other["given_name"], word.to_lower() + ("s" if word == "Friend" or word == "Acquaintance" or word == "Stranger" else ""),
 				viewer_name, mine, other["given_name"], other["given_name"], theirs, viewer_name,
-				talks, "talk" if talks == 1 else "talks",
+				week_talks, "talk" if week_talks == 1 else "talks", talks,
 			]
 		else:
-			panel.tooltip_text = "%s has not met %s yet." % [viewer_name, other["given_name"]]
+			panel.tooltip_text = "%s has not met %s yet.\nSend someone over with Talk to say hello." % [viewer_name, other["given_name"]]
 		(entry["meter"] as Control).queue_redraw()
 	var order: Array = _neighbor_rows.keys()
 	order.sort_custom(func(a: String, b: String) -> bool:
@@ -1144,6 +1285,9 @@ func _refresh_feed() -> void:
 			text.text = "[b][color=%s]%s[/color][/b]   %s" % [
 				_hex(TEAL), Describe.event_time(event), Describe.event_rich(simulation, event, _player_ids),
 			]
+			var plain: String = "%s   %s" % [Describe.event_time(event), Describe.event(simulation, event)]
+			var clipped: bool = get_theme_default_font().get_string_size(plain, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x > row.size.x - 34.0
+			row.tooltip_text = plain if clipped else ""
 		var age: int = now - int(_first_shown[event["id"]])
 		var t: float = clampf(float(age) / float(FEED_SLIDE_MS), 0.0, 1.0)
 		var ease_in: float = 1.0 - pow(1.0 - t, 3.0)
@@ -1175,6 +1319,14 @@ func _refresh_goal_shine() -> void:
 			_goal_rows[index].queue_redraw()
 			if now - int(_goal_shine[id]) > GOAL_SHINE_MS:
 				_goal_shine.erase(id)
+
+
+## What is known about a building as a drawn page, for show_sheet's content.
+## info comes from sim/reports/building_info.gd.
+func building_page(info: Dictionary, viewer_id: String) -> Control:
+	var page: Control = BuildingPage.new()
+	page.setup(simulation, info, viewer_id)
+	return page
 
 
 ## The week's summary as a page of a small paper, for show_sheet's content.

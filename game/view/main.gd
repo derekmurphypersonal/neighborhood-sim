@@ -26,8 +26,30 @@ const SCENARIO: String = "fixture_street_spring_1950"
 ## Game minutes per real second for each speed setting.
 const SPEEDS: Array[int] = [0, 1, 10, 60]
 const MAX_TICKS_PER_FRAME: int = 240
+## Two placeholder pieces: the waltz by day, the slower piece in the evening
+## and overnight (and on the title screen). The evening piece comes in over
+## 18:30 to 19:30 and goes out over 04:30 to 05:30 by the game clock; the
+## change heard is never quicker than MUSIC_FADE_PER_SECOND, in real time,
+## so it stays gentle at the fastest speed.
 const MUSIC_FILE: String = "music_placeholder_waltz.ogg"
+const MUSIC_EVENING_FILE: String = "music_placeholder_evening.ogg"
 const MUSIC_VOLUME_DB: float = -14.0
+const EVENING_IN_START: int = 1110
+const EVENING_IN_END: int = 1170
+const EVENING_OUT_START: int = 270
+const EVENING_OUT_END: int = 330
+const MUSIC_FADE_PER_SECOND: float = 0.25
+## Short interface sounds: name, file, level. All go to the Sounds bus.
+const SFX: Array[Array] = [
+	["click", "ui_click.ogg", -13.0], ["hover", "ui_hover.ogg", -16.0],
+	["sheet_open", "ui_sheet_open.ogg", -13.0], ["sheet_close", "ui_sheet_close.ogg", -14.0],
+	["order", "ui_order.ogg", -12.0], ["door_open", "door_open.ogg", -11.0], ["door_close", "door_close.ogg", -11.0],
+	["goal", "chime_goal.ogg", -9.0], ["payday", "chime_payday.ogg", -9.0],
+]
+## Buttons with this look also tick quietly when the pointer comes onto them.
+const HOVER_SOUND_BUTTONS: String = "TitleButton"
+const DOOR_GAP_MS: int = 250
+const HOVER_GAP_MS: int = 70
 const CHIME_VOLUME_DB: float = -9.0
 const CHIME_GAP_MS: int = 450
 ## Outdoor ambience sits well under the music. The day bed is full from 06:30
@@ -45,6 +67,8 @@ const SILENT_DB: float = -80.0
 const SETTINGS_PATH: String = "user://settings.cfg"
 const DEFAULT_SETTINGS: Dictionary = {
 	"music_volume": 1.0, "sound_volume": 1.0, "fullscreen": false, "music_on": true, "sound_on": true,
+	# First-time tips: whether to show them, and the ones already shown (comma-separated IDs from view/tips.gd).
+	"show_tips": true, "tips_seen": "",
 }
 const MUSIC_BUS: String = "Music"
 const SOUNDS_BUS: String = "Sounds"
@@ -53,6 +77,8 @@ const MIN_WINDOW_SIZE: Vector2i = Vector2i(960, 540)
 ## Fades between the title and the game, in real seconds.
 const FADE_OUT_SECONDS: float = 0.45
 const FADE_IN_SECONDS: float = 0.7
+## From this time of the evening the "night" tip may be shown (minutes after midnight).
+const TIP_NIGHT_MINUTE: int = 22 * 60
 ## Indoor activities not worth a note over the house.
 const QUIET_INDOORS: Array[String] = ["At home", "Deciding what to do", "Heading home"]
 
@@ -74,6 +100,13 @@ var _screenshot_minutes: int = 0
 var _screenshot_sheet: String = ""
 var _screenshot_zoom: float = 1.0
 var _music: AudioStreamPlayer
+var _music_evening: AudioStreamPlayer
+## How much of the evening piece is heard now, 0 to 1. Starts at 1: the title
+## screen plays the evening piece.
+var _music_mix: float = 1.0
+## Interface sounds by name, and when each last played (for the gaps).
+var _sfx: Dictionary = {}
+var _sfx_last_ms: Dictionary = {}
 var _chime_talk: AudioStreamPlayer
 var _chime_notice: AudioStreamPlayer
 var _ambience_day: AudioStreamPlayer
@@ -122,6 +155,8 @@ func _ready() -> void:
 
 	get_window().title = WINDOW_TITLE
 	get_window().min_size = MIN_WINDOW_SIZE
+	# Every button made from here on, by any screen, gets the click sound.
+	get_tree().node_added.connect(_on_node_added)
 	_layer = CanvasLayer.new()
 	add_child(_layer)
 	_fx = ScreenFx.new()
@@ -164,6 +199,7 @@ func _build_front_layers() -> void:
 	front.add_child(_title)
 	_settings_sheet = SettingsSheet.new()
 	_settings_sheet.changed.connect(_on_settings_changed)
+	_settings_sheet.closed.connect(func() -> void: _sound("sheet_close"))
 	front.add_child(_settings_sheet)
 
 	var fade_layer: CanvasLayer = CanvasLayer.new()
@@ -192,6 +228,7 @@ func _start_new_game() -> bool:
 
 
 func _process(delta: float) -> void:
+	_mix_music(delta)
 	if world_view == null:
 		return
 	_pending_minutes += delta * SPEEDS[speed_index]
@@ -208,6 +245,8 @@ func _process(delta: float) -> void:
 		if simulation.clock.day_index != _banner_day:
 			_banner_day = simulation.clock.day_index
 			_fx.show_day(_banner_day)
+		if simulation.clock.minute_of_day >= TIP_NIGHT_MINUTE:
+			_tip("night")
 	# How far into the current minute we are, for smooth walking.
 	world_view.minute_fraction = clampf(_pending_minutes, 0.0, 1.0) if SPEEDS[speed_index] > 0 else 1.0
 	world_view.selected_id = selected_id
@@ -288,6 +327,8 @@ func _show_simulation(shown: Simulation) -> void:
 	hud.menu_requested.connect(_show_menu)
 	hud.sheet_closed.connect(_on_sheet_closed)
 	_layer.add_child(hud)
+	hud.tips.tip_shown.connect(_on_tip_shown)
+	_setup_tips()
 	_watch(false)
 
 
@@ -317,7 +358,10 @@ func _show_menu(note: String = "") -> void:
 		lines.append("")
 		lines.append("[color=#ffeb8c]%s[/color]" % note)
 	_open_sheet("Menu", "\n".join(lines), [
-		["Save game", _save_game], ["Load game", _load_game], ["Settings", _open_settings], ["Main menu", _confirm_main_menu],
+		["Save game", _save_game, "Keep the game as it is now, replacing the last saved game"],
+		["Load game", _load_game, "Go back to the saved game; anything since then is lost"],
+		["Settings", _open_settings, "Music and sound volume, full screen, and tips"],
+		["Main menu", _confirm_main_menu, "Leave this game for the title screen"],
 	], "Resume")
 
 
@@ -357,10 +401,13 @@ func _open_sheet(title: String, text: String, actions: Array = [], close_label: 
 		_speed_before_sheet = speed_index
 	speed_index = 0
 	_pending_minutes = 0.0
+	if not hud.sheet_is_open():
+		_sound("sheet_open")
 	hud.show_sheet(title, text, actions, close_label, content)
 
 
 func _on_sheet_closed() -> void:
+	_sound("sheet_close")
 	if _speed_before_sheet >= 0:
 		speed_index = _speed_before_sheet
 	_speed_before_sheet = -1
@@ -476,6 +523,8 @@ func _close_game() -> void:
 
 
 func _open_settings() -> void:
+	if not _settings_sheet.is_open():
+		_sound("sheet_open")
 	_settings["music_on"] = music_on
 	_settings["sound_on"] = sound_on
 	_settings_sheet.open(_settings)
@@ -497,6 +546,11 @@ func _on_settings_changed(changed: Dictionary) -> void:
 	_apply_volumes()
 	if bool(changed["fullscreen"]) != bool(_settings["fullscreen"]):
 		_set_fullscreen(bool(changed["fullscreen"]))
+	if changed.has("show_tips") and bool(changed["show_tips"]) != bool(_settings["show_tips"]):
+		_settings["show_tips"] = bool(changed["show_tips"])
+		if _settings["show_tips"]:
+			_settings["tips_seen"] = ""  # switching tips back on shows them all again
+		_setup_tips()
 	_save_settings()
 
 
@@ -543,10 +597,35 @@ func _save_settings() -> void:
 
 
 ## What is known about a building: documented exterior, fictional interior
-## and fictional scenario content, each under its own heading.
+## and fictional scenario content, each in its own labelled panel of a drawn
+## page (view/building_page.gd), all from the building report.
 func _show_building(building_id: String) -> void:
 	var info: Dictionary = BuildingInfo.describe(simulation, building_id)
-	_open_sheet(info["label"], Describe.building_info(simulation, info), [], "Close")
+	_open_sheet("About this building", Describe.building_info(simulation, info), [], "Close", hud.building_page(info, selected_id))
+
+
+# --- First-time tips ---------------------------------------------------------
+
+## Gives the tip bubble the list of tips already seen. Screenshots show no
+## tips (unless asked with "--show tip"), so pictures are the same every run.
+func _setup_tips() -> void:
+	if hud == null:
+		return
+	var quiet: bool = _screenshot_path != "" and _screenshot_sheet != "tip"
+	hud.tips.setup(str(_settings["tips_seen"]).split(",", false), bool(_settings["show_tips"]) and not quiet)
+
+
+## Offers a first-time tip (IDs are in view/tips.gd); it shows only once.
+func _tip(tip_id: String) -> void:
+	if hud != null:
+		hud.tips.offer(tip_id)
+
+
+## Remembers the tip as seen. _save_settings never writes during the
+## self-check or a screenshot run.
+func _on_tip_shown(_tip_id: String) -> void:
+	_settings["tips_seen"] = ",".join(PackedStringArray(hud.tips.seen()))
+	_save_settings()
 
 
 ## The player's household's week, made from the event log.
@@ -556,12 +635,15 @@ func _show_week(first_day: int, title: String) -> void:
 	var goals: Array = WeekGoals.evaluate(simulation.state, household_id, first_day, first_day + 6, simulation.clock.day_index)
 	_open_sheet("%s: the %s" % [title, simulation.state.households[household_id]["name"]], Describe.week_summary(simulation, summary, goals),
 			[], "Continue", hud.week_paper(summary, goals))
+	_tip("week")
 
 
 # --- Selecting and ordering --------------------------------------------------
 
 func _select(person_id: String) -> void:
 	selected_id = person_id
+	if _is_players(person_id):
+		_tip("select")
 
 
 func _is_players(person_id: String) -> bool:
@@ -612,6 +694,7 @@ func _give_order(person_id: String, order: Dictionary) -> void:
 		"enter":
 			world_view.add_toast("You sent %s into %s." % [given_name, simulation.area.institutions[order["place_id"]]["name"]])
 	hud.show_message("Order given to %s." % given_name)
+	_sound("order")
 
 
 # --- Noticing what happens ---------------------------------------------------
@@ -626,6 +709,9 @@ func _watch(announce: bool) -> void:
 		world_view.show_activity(person_id, text)
 		var before_at: String = _last_at.get(person_id, person["at"])
 		if announce and before_at != person["at"]:
+			# A door for the player's own household going out or coming in.
+			if notes_allowed and _is_players(person_id) and (before_at == Records.AT_INSIDE or person["at"] == Records.AT_INSIDE):
+				_sound("door_close" if person["at"] == Records.AT_INSIDE else "door_open", DOOR_GAP_MS)
 			if person["at"] == Records.AT_OFFMAP:
 				var where: String = "work" if person["action"].get("kind", "") == "work" else "school"
 				world_view.add_float([person["x"], person["y"]], 20.0, "%s left for %s" % [person["given_name"], where], WorldView.COLOR_NOTE)
@@ -637,6 +723,7 @@ func _watch(announce: bool) -> void:
 			if talking and person_id < action["other_id"]:
 				if _is_players(person_id) or _is_players(action["other_id"]):
 					world_view.add_toast("%s and %s are talking." % [person["given_name"], Describe.given_name(simulation, action["other_id"])])
+					_tip("talk")
 					_chime(_chime_talk)
 			if notes_allowed and person["at"] == Records.AT_INSIDE and not QUIET_INDOORS.has(text):
 				world_view.add_house_note(person["place_id"], "%s: %s%s" % [person["given_name"], text.left(1).to_lower(), text.substr(1)])
@@ -670,7 +757,8 @@ func _check_goals(announce: bool) -> void:
 	for goal: Dictionary in goals:
 		if announce and first_day == _goals_week and goal["status"] == "done" and _goal_status.get(goal["id"], "") != "done":
 			world_view.add_toast("Done: %s" % goal["title"])
-			_chime(_chime_notice)
+			_tip("goal")
+			_chime(_sfx.get("goal", _chime_notice))
 		_goal_status[goal["id"]] = goal["status"]
 	_goals_week = first_day
 	hud.show_goals(goals)
@@ -695,8 +783,10 @@ func _announce_event(event: Dictionary) -> void:
 		"payday", "rent_paid", "shopping", "empty_pantry", "household_short_of_money", "missed_work":
 			# Money news is announced for the player's own household only.
 			if simulation.state.households[event["household_id"]]["player_controlled"]:
+				if event["type"] == "payday":
+					_tip("payday")
 				world_view.add_toast(Describe.event(simulation, event))
-				_chime(_chime_notice)
+				_chime(_sfx.get("payday", _chime_notice) if event["type"] == "payday" else _chime_notice)
 
 
 # --- Sound -------------------------------------------------------------------
@@ -706,19 +796,26 @@ func _announce_event(event: Dictionary) -> void:
 func _setup_audio(start_playing: bool) -> void:
 	_make_bus(MUSIC_BUS)
 	_make_bus(SOUNDS_BUS)
-	_music = _player(MUSIC_FILE, MUSIC_VOLUME_DB, MUSIC_BUS)
+	_music = _player(MUSIC_FILE, SILENT_DB, MUSIC_BUS)
+	_music_evening = _player(MUSIC_EVENING_FILE, SILENT_DB, MUSIC_BUS)
+	for entry: Array in SFX:
+		var effect: AudioStreamPlayer = _player(entry[1], entry[2], SOUNDS_BUS)
+		if effect != null:
+			_sfx[entry[0]] = effect
 	_chime_talk = _player("chime_talk.ogg", CHIME_VOLUME_DB, SOUNDS_BUS)
 	_chime_notice = _player("chime_notice.ogg", CHIME_VOLUME_DB, SOUNDS_BUS)
 	_ambience_day = _player(AMBIENCE_DAY_FILE, SILENT_DB, SOUNDS_BUS)
 	_ambience_night = _player(AMBIENCE_NIGHT_FILE, SILENT_DB, SOUNDS_BUS)
 	_apply_volumes()
-	if _music != null:
-		(_music.stream as AudioStreamOggVorbis).loop = true
-		if start_playing:
-			_music.play()
-			_music.stream_paused = not music_on
-	else:
+	for player: AudioStreamPlayer in [_music, _music_evening]:
+		if player != null:
+			(player.stream as AudioStreamOggVorbis).loop = true
+			if start_playing:
+				player.play()
+				player.stream_paused = not music_on
+	if _music == null and _music_evening == null:
 		music_on = false
+	_mix_music(0.0)
 	for player: AudioStreamPlayer in [_ambience_day, _ambience_night]:
 		if player != null:
 			(player.stream as AudioStreamOggVorbis).loop = true
@@ -768,15 +865,16 @@ func _player(file_name: String, volume_db: float, bus_name: String) -> AudioStre
 
 
 func _set_music(on: bool) -> void:
-	music_on = on and _music != null
+	music_on = on and (_music != null or _music_evening != null)
 	if music_on and float(_settings["music_volume"]) <= 0.0:
 		# Switching on music that was turned right down brings it back up.
 		_settings["music_volume"] = 0.5
 		_apply_volumes()
-	if _music != null:
-		_music.stream_paused = not music_on
-		if music_on and not _music.playing:
-			_music.play()
+	for player: AudioStreamPlayer in [_music, _music_evening]:
+		if player != null:
+			player.stream_paused = not music_on
+			if music_on and not player.playing:
+				player.play()
 	_save_settings()
 
 
@@ -828,9 +926,74 @@ static func _ambience_db(gain: float) -> float:
 	return maxf(AMBIENCE_VOLUME_DB + linear_to_db(gain), SILENT_DB)
 
 
+## How much of the evening piece (rather than the day waltz) belongs to a
+## time of day given in minutes after midnight: 1 from 19:30 to 04:30, 0 from
+## 05:30 to 18:30, a straight ramp between.
+static func evening_share(minute_of_day: int) -> float:
+	if minute_of_day >= EVENING_IN_END or minute_of_day < EVENING_OUT_START:
+		return 1.0
+	if minute_of_day < EVENING_OUT_END:
+		return 1.0 - float(minute_of_day - EVENING_OUT_START) / float(EVENING_OUT_END - EVENING_OUT_START)
+	if minute_of_day < EVENING_IN_START:
+		return 0.0
+	return float(minute_of_day - EVENING_IN_START) / float(EVENING_IN_END - EVENING_IN_START)
+
+
+## Moves the music toward the piece that suits the game clock (the evening
+## piece when no game is on screen), a little each frame, with an equal-power
+## crossfade. The clock sets the target; delta only limits how fast it is heard.
+func _mix_music(delta: float) -> void:
+	if _music == null and _music_evening == null:
+		return
+	var target: float = 1.0 if simulation == null else evening_share(simulation.clock.minute_of_day)
+	_music_mix = move_toward(_music_mix, target, delta * MUSIC_FADE_PER_SECOND)
+	# With only one piece present it plays at full level all day.
+	var evening_gain: float = sin(_music_mix * PI * 0.5) if _music != null else 1.0
+	var day_gain: float = cos(_music_mix * PI * 0.5) if _music_evening != null else 1.0
+	if _music != null:
+		_music.volume_db = _level_db(MUSIC_VOLUME_DB, day_gain)
+	if _music_evening != null:
+		_music_evening.volume_db = _level_db(MUSIC_VOLUME_DB, evening_gain)
+
+
+static func _level_db(full_db: float, gain: float) -> float:
+	if gain <= 0.001:
+		return SILENT_DB
+	return maxf(full_db + linear_to_db(gain), SILENT_DB)
+
+
+## Plays a short interface sound by name, unless sounds are off. With a gap,
+## the same sound is not repeated sooner than that. Nothing plays in the
+## self-check.
+func _sound(sound: String, gap_ms: int = 0) -> void:
+	var player: AudioStreamPlayer = _sfx.get(sound)
+	if player == null or not sound_on or _checking:
+		return
+	var now: int = Time.get_ticks_msec()
+	if gap_ms > 0 and now - int(_sfx_last_ms.get(sound, -gap_ms)) < gap_ms:
+		return
+	_sfx_last_ms[sound] = now
+	player.play()
+
+
+## Called for every node that enters the tree: gives each button the click
+## sound, and the main (title) buttons a quiet tick on hover. Catching them
+## here covers buttons made later by any screen.
+func _on_node_added(node: Node) -> void:
+	if not node is BaseButton or node.has_meta("ui_sound"):
+		return
+	var button: BaseButton = node as BaseButton
+	button.set_meta("ui_sound", true)
+	button.pressed.connect(func() -> void: _sound("click"))
+	if button.theme_type_variation == HOVER_SOUND_BUTTONS:
+		button.mouse_entered.connect(func() -> void:
+			if not button.disabled:
+				_sound("hover", HOVER_GAP_MS))
+
+
 func _chime(player: AudioStreamPlayer) -> void:
 	var now: int = Time.get_ticks_msec()
-	if player == null or not sound_on or now - _last_chime_ms < CHIME_GAP_MS:
+	if player == null or not sound_on or _checking or now - _last_chime_ms < CHIME_GAP_MS:
 		return
 	_last_chime_ms = now
 	player.play()
@@ -844,14 +1007,19 @@ func _chime(player: AudioStreamPlayer) -> void:
 func _self_check() -> void:
 	set_process(false)
 	var problems: Array[String] = []
-	for entry: Array in [["music", _music], ["talk chime", _chime_talk], ["notice chime", _chime_notice],
-			["day ambience", _ambience_day], ["night ambience", _ambience_night]]:
+	var sounds: Array[Array] = [["day music", _music], ["evening music", _music_evening], ["talk chime", _chime_talk],
+			["notice chime", _chime_notice], ["day ambience", _ambience_day], ["night ambience", _ambience_night]]
+	for effect: Array in SFX:
+		sounds.append(["%s sound (%s)" % [effect[0], effect[1]], _sfx.get(effect[0])])
+	for entry: Array in sounds:
 		var player: AudioStreamPlayer = entry[1]
 		if player == null or player.stream == null or player.stream.get_length() <= 0.0:
 			problems.append("%s did not load" % entry[0])
 		else:
-			print("SELF-CHECK  %s loaded, %.1f seconds" % [entry[0], player.stream.get_length()])
-	for entry: Array in [["music", _music], ["day ambience", _ambience_day], ["night ambience", _ambience_night]]:
+			print("SELF-CHECK  %s loaded, %.2f seconds, on the %s bus" % [entry[0], player.stream.get_length(), player.bus])
+			if player.bus != (MUSIC_BUS if (entry[0] as String).ends_with("music") else SOUNDS_BUS):
+				problems.append("%s is on the wrong bus" % entry[0])
+	for entry: Array in [["day music", _music], ["evening music", _music_evening], ["day ambience", _ambience_day], ["night ambience", _ambience_night]]:
 		var looped: AudioStreamPlayer = entry[1]
 		if looped != null and not (looped.stream as AudioStreamOggVorbis).loop:
 			problems.append("%s is not set to loop" % entry[0])
@@ -860,10 +1028,12 @@ func _self_check() -> void:
 			problems.append("ambience mix at minute %d is %.2f, expected %.2f" % [entry[0], day_share(entry[0]), entry[1]])
 	print("SELF-CHECK  ambience follows the clock: day share %.2f at noon, %.2f at 19:30, %.2f at midnight" \
 			% [day_share(720), day_share(1170), day_share(0)])
-	for entry: Array in [["music", _music], ["day ambience", _ambience_day], ["night ambience", _ambience_night]]:
-		var silent: AudioStreamPlayer = entry[1]
-		if silent != null and silent.playing:
-			problems.append("%s is playing during the check" % entry[0])
+	for entry: Array in [[0, 1.0], [285, 0.75], [330, 0.0], [720, 0.0], [1140, 0.5], [1170, 1.0], [1380, 1.0]]:
+		if not is_equal_approx(evening_share(entry[0]), entry[1]):
+			problems.append("music mix at minute %d is %.2f, expected %.2f" % [entry[0], evening_share(entry[0]), entry[1]])
+	print("SELF-CHECK  music follows the clock: evening share %.2f at noon, %.2f at 19:00, %.2f at midnight" \
+			% [evening_share(720), evening_share(1140), evening_share(0)])
+	_note_anything_playing(problems, "at the start of the check")
 	var refusal: String = simulation.give_order(selected_id, {"kind": "go_home"})
 	if refusal != "":
 		problems.append("an order to the player's household was refused: " + refusal)
@@ -906,10 +1076,28 @@ func _self_check() -> void:
 	if _last_activity.size() != simulation.state.people.size():  # one per resident
 		problems.append("not everyone has an activity bubble")
 	await _check_front_screens(problems)
+	_note_anything_playing(problems, "by the end of the check")
+	if problems.is_empty():
+		print("SELF-CHECK  no sound played: none of the %d players was ever started" % _audio_players().size())
 	for problem: String in problems:
 		print("SELF-CHECK  PROBLEM: " + problem)
 	print("SELF-CHECK  %s" % ("passed" if problems.is_empty() else "FAILED"))
 	get_tree().quit(0 if problems.is_empty() else 1)
+
+
+func _audio_players() -> Array[AudioStreamPlayer]:
+	var players: Array[AudioStreamPlayer] = []
+	for child: Node in get_children():
+		if child is AudioStreamPlayer:
+			players.append(child as AudioStreamPlayer)
+	return players
+
+
+## Part of the self-check: the check must play nothing at all.
+func _note_anything_playing(problems: Array[String], when: String) -> void:
+	for player: AudioStreamPlayer in _audio_players():
+		if player.playing or player.get_playback_position() > 0.0:
+			problems.append("%s is playing %s" % [player.stream.resource_path if player.stream.resource_path != "" else str(player), when])
 
 
 ## Part of the self-check: the settings sheet changes the volume live, the
@@ -963,6 +1151,13 @@ func _show_for_screenshot() -> void:
 			_show_building(simulation.area.sorted_building_ids()[0])
 		"store":
 			_show_building(simulation.area.institution_of_kind("store"))
+		"neighbor":
+			# The first building other than the player's home that someone lives in.
+			var own_home: String = simulation.state.households[simulation.state.player_household_id()]["home_id"]
+			for building_id: String in simulation.area.sorted_building_ids():
+				if building_id != own_home and not (BuildingInfo.describe(simulation, building_id)["households"] as Array).is_empty():
+					_show_building(building_id)
+					break
 		"menu":
 			_show_menu()
 		"week":
@@ -978,6 +1173,8 @@ func _show_for_screenshot() -> void:
 			_fx.show_day(simulation.clock.day_index)
 		"leave":
 			_confirm_main_menu()
+		"tip":
+			_tip("select")
 
 
 ## A short welcome at the start of a new game: what this is, and the controls.
@@ -1005,7 +1202,7 @@ func _show_welcome() -> void:
 func _take_screenshot() -> void:
 	set_process(false)
 	if _screenshot_sheet == "title":
-		await get_tree().create_timer(1.6).timeout  # let the title fade in
+		await get_tree().create_timer(3.2).timeout  # let the title fade in
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(_screenshot_path)
 		get_tree().quit()

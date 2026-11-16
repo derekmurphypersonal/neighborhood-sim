@@ -5,8 +5,15 @@ extends Node2D
 ## notices and the cutaway of the player's home.
 ##
 ## Presentation only: reads simulation state, changes nothing. Decorations
-## (trees, shrubs, parked cars, lamps, paint colors) are invented, chosen
-## deterministically from IDs, and never stored in simulation state (P-023).
+## (trees, shrubs, parked cars, lamps, paint colors, a cat and a dog) are
+## invented, chosen deterministically from IDs, and never stored in
+## simulation state (D-058).
+##
+## It also answers the player: a dashed path and a marker where the selected
+## person has been sent, a ripple where the map is clicked, doors that swing
+## as people go in and out, a wave when a conversation starts, and a card
+## about the person under the pointer. These are worked out by comparing
+## the simulation's state with what was drawn the frame before.
 
 signal person_clicked(person_id: String)
 signal building_clicked(building_id: String)
@@ -41,6 +48,11 @@ const FLOAT_MS: int = 2600
 const HOUSE_NOTE_MS: int = 3200
 const TOAST_MS: int = 4500
 const MAX_FLOATS: int = 14
+const RIPPLE_MS: int = 480
+const DOOR_SWING_MS: int = 1000
+const WAVE_MS: int = 1000
+const ORDER_FADE_IN_MS: int = 180
+const ORDER_FADE_OUT_MS: int = 600
 const FOLLOW_EASE: float = 3.0
 
 ## Game minutes (of the day) when kitchen stoves and furnaces send smoke up
@@ -204,6 +216,42 @@ var _bicycles: Array = []   # {"x", "y", "along", "lean", "paint"}
 var _wagons: Array = []     # {"x", "y", "along"}
 var _tulips: Array = []     # {"a", "b", "colors"}
 var _glints: Array = []     # {"x", "y", "phase"}: lamplight catching the street at night
+# Kinds of thing that stand up from the ground, for the drawing order.
+enum {KIND_BUILDING, KIND_TREE, KIND_SHRUB, KIND_LAMP, KIND_CAR, KIND_FENCE, KIND_FLOWERS, KIND_MAILBOX, KIND_CLOTHESLINE,
+		KIND_POLE, KIND_WIRE, KIND_HYDRANT, KIND_CAN, KIND_BICYCLE, KIND_WAGON, KIND_TULIPS, KIND_PERSON, KIND_CAT, KIND_DOG}
+## Everything that stands still, sorted once from the back of the view to
+## the front (the order does not change with zoom or panning). Each:
+## [order, bias (pixels), kind, item, x, y (world), radius, height (inches)].
+var _statics: Array = []
+## Building IDs in order, and each building's footprint as a rectangle.
+var _building_ids: Array = []
+var _rects: Dictionary = {}
+## building_id -> [people inside, of whom asleep], counted once a frame
+var _inside: Dictionary = {}
+## Screen geometry that depends only on the zoom and pan, kept until either
+## changes: grass tufts, fence pickets, wires and mowing stripes.
+var _view_key: Vector3 = Vector3.ZERO
+var _tuft_lines: Array[PackedVector2Array] = []
+var _fence_lines: Array = []
+var _wire_lines: Array = []
+var _stripe_shapes: Array[PackedVector2Array] = []
+var _sign_box: StyleBoxFlat
+var _tag_box: StyleBoxFlat
+var _one_color: PackedColorArray = PackedColorArray([Color.WHITE])
+## A white disc in three faint steps, made in code: one soft blotch of grass.
+var _blotch: ImageTexture
+var _no_uvs: PackedVector2Array = PackedVector2Array()
+
+## A cat and a dog, invented like the rest of the decoration. The cat:
+## {"route" (Array of Vector3: world x, y and height, from its step to its
+## place on a fence), "coat", "offset" (seconds), "face"}. The dog: {"a", "b"
+## (world Vector2, the ends of its run), "coat", "ear", "offset"}. Empty if
+## there is no good place for one.
+var _cat: Dictionary = {}
+var _dog: Dictionary = {}
+## Where each is this frame: {"at" (Vector3), "pose", "face" (1 right, -1 left), "step"}
+var _cat_now: Dictionary = {}
+var _dog_now: Dictionary = {}
 var _golden: float = 0.0
 var _spring: bool = false
 var _selected_seen: String = ""
@@ -211,6 +259,27 @@ var _selected_since: int = -100000
 
 # Follow camera: the view keeps the selected person near the middle of the map.
 var _following: bool = false
+
+# Feedback and small animations. All of it is presentation, kept here and
+# worked out by comparing the simulation's state with what was seen last frame.
+## Each: {"iso" (unscaled isometric point), "since", "good"}
+var _ripples: Array = []
+## person_id -> [at, place_id] as last drawn
+var _seen_at: Dictionary = {}
+## person_id -> whether they were talking when last drawn
+var _seen_talking: Dictionary = {}
+## building_id -> when (ms) its door last swung open
+var _door_swings: Dictionary = {}
+## person_id -> when (ms) they started waving
+var _waves: Dictionary = {}
+## person_id -> building they are about to be seen stepping into
+var _doors_due: Dictionary = {}
+## person_id -> true: will wave once seen to arrive
+var _waves_due: Dictionary = {}
+## Where the selected person has been sent: {"person_id", "points" (world
+## Vector2s, from them to the place), "flag" (a building's door), "born",
+## "seen" (ms it last held good)}; empty when there is nothing to show.
+var _order_mark: Dictionary = {}
 
 
 func setup(sim: Simulation) -> void:
@@ -229,8 +298,32 @@ func setup(sim: Simulation) -> void:
 	_card_head.corner_radius_bottom_right = 0
 	_pill_box = _box(Color(0.15, 0.13, 0.12, 0.72), Color(0, 0, 0, 0), 0, 8)
 	_home_pill = _box(TEAL, MUSTARD, 2, 8)
+	_sign_box = _box(Color.WHITE, CHERRY, 2, 4)
+	_tag_box = _box(Color.WHITE, Color(1, 1, 1, 0.7), 1, 4)
+	_building_ids = area.sorted_building_ids()
+	_blotch = _make_blotch()
 	_fit_to_screen()
 	_plan_decoration()
+	_plan_drawing_order()
+
+
+## Three discs laid one on another, each letting 5% through: the same
+## look as drawing them one by one, as a single small picture.
+func _make_blotch() -> ImageTexture:
+	var size: int = 96
+	var image: Image = Image.create(size, size, false, Image.FORMAT_RGBA8)
+	for y: int in size:
+		for x: int in size:
+			var r: float = Vector2(float(x) + 0.5 - float(size) / 2.0, float(y) + 0.5 - float(size) / 2.0).length() / (float(size) / 2.0)
+			var alpha: float = 0.0
+			if r <= 0.4:
+				alpha = 1.0 - 0.95 * 0.95 * 0.95
+			elif r <= 0.7:
+				alpha = 1.0 - 0.95 * 0.95
+			elif r <= 1.0:
+				alpha = 0.05
+			image.set_pixel(x, y, Color(1, 1, 1, alpha))
+	return ImageTexture.create_from_image(image)
 
 
 func _box(fill: Color, border: Color, width: int, radius: int) -> StyleBoxFlat:
@@ -427,6 +520,14 @@ func _rng_for(key: String) -> RandomNumberGenerator:
 
 func _pick(colors: Array[Color], key: String) -> Color:
 	return colors[absi(key.hash()) % colors.size()]
+
+
+## A building's footprint as a rectangle, worked out once.
+func _building_rect(building: Dictionary) -> Rect2:
+	var id: String = building["id"]
+	if not _rects.has(id):
+		_rects[id] = _rect_of(building["footprint"])
+	return _rects[id]
 
 
 func _rect_of(points: Array) -> Rect2:
@@ -687,6 +788,7 @@ func _plan_decoration() -> void:
 						"paint": CAR_PAINT[car_rng.randi_range(0, CAR_PAINT.size() - 1)]})
 
 	_plan_street_furniture()
+	_plan_animals()
 
 	# Large, soft cloud shadows that drift over the street by day.
 	var cloud_rng: RandomNumberGenerator = _rng_for("clouds")
@@ -832,6 +934,161 @@ func _plan_yard_things(fronts: Array) -> void:
 				return
 
 
+## Puts everything that stands still into one list, in the order it is
+## drawn: from the back of the view to the front. That order depends only on
+## where things are in the world, so it is worked out once.
+func _plan_drawing_order() -> void:
+	_statics.clear()
+	for building_id: String in _building_ids:
+		var building: Dictionary = area.buildings[building_id]
+		var rect: Rect2 = _building_rect(building)
+		_add_static(KIND_BUILDING, building_id, rect.get_center(), 0.0, rect.size.length() / 2.0 + 12.0 * FOOT,
+				_wall_height(building) + _roof_rise(building) + 10.0 * FOOT)
+	for tree: Dictionary in _trees:
+		_add_static(KIND_TREE, tree, Vector2(tree["x"], tree["y"]), 0.0, float(tree["size"]) * 1.4, float(tree["size"]) * 2.6)
+	for shrub: Dictionary in _shrubs:
+		_add_static(KIND_SHRUB, shrub, Vector2(shrub["x"], shrub["y"]), 0.0, float(shrub["size"]) * 1.2, float(shrub["size"]) * 2.0)
+	for lamp: Dictionary in _lamps:
+		_add_static(KIND_LAMP, lamp, Vector2(lamp["x"], lamp["y"]), 0.0, 4.0 * FOOT, 14.0 * FOOT)
+	for car: Dictionary in _cars:
+		_add_static(KIND_CAR, car, Vector2(car["x"], car["y"]), 0.0, 10.0 * FOOT, 6.0 * FOOT)
+	for bed: Dictionary in _flowers:
+		_add_static(KIND_FLOWERS, bed, Vector2(bed["x"], bed["y"]), -1.0, 4.0 * FOOT, 2.0 * FOOT)
+	for mailbox: Dictionary in _mailboxes:
+		_add_static(KIND_MAILBOX, mailbox, Vector2(mailbox["x"], mailbox["y"]), 0.0, 2.0 * FOOT, 6.0 * FOOT)
+	for line: Dictionary in _clotheslines:
+		var a: Vector2 = line["a"]
+		var b: Vector2 = line["b"]
+		_add_static(KIND_CLOTHESLINE, line, (a + b) / 2.0, 0.0, a.distance_to(b) / 2.0 + FOOT, 7.0 * FOOT)
+	for index: int in _fences.size():
+		var a: Vector2 = _fences[index][0]
+		var b: Vector2 = _fences[index][1]
+		_add_static(KIND_FENCE, index, (a + b) / 2.0, -2.0, a.distance_to(b) / 2.0 + FOOT, 4.0 * FOOT)
+	for pole: Dictionary in _poles:
+		_add_static(KIND_POLE, pole, Vector2(pole["x"], pole["y"]), 0.0, 4.0 * FOOT, POLE_HEIGHT + FOOT)
+	for index: int in _wires.size():
+		var wire: Dictionary = _wires[index]
+		var a: Vector2 = (wire["a"] as Vector2).lerp(wire["b"], wire["t0"])
+		var b: Vector2 = (wire["a"] as Vector2).lerp(wire["b"], wire["t1"])
+		_add_static(KIND_WIRE, index, (a + b) / 2.0, 0.2, a.distance_to(b) / 2.0 + 3.0 * FOOT, POLE_HEIGHT)
+	for hydrant: Dictionary in _hydrants:
+		_add_static(KIND_HYDRANT, hydrant, Vector2(hydrant["x"], hydrant["y"]), 0.0, 2.0 * FOOT, 3.0 * FOOT)
+	for can: Dictionary in _cans:
+		_add_static(KIND_CAN, can, Vector2(can["x"], can["y"]), 0.0, 2.0 * FOOT, 3.0 * FOOT)
+	for bike: Dictionary in _bicycles:
+		_add_static(KIND_BICYCLE, bike, Vector2(bike["x"], bike["y"]), 0.0, 4.0 * FOOT, 4.0 * FOOT)
+	for wagon: Dictionary in _wagons:
+		_add_static(KIND_WAGON, wagon, Vector2(wagon["x"], wagon["y"]), 0.0, 5.0 * FOOT, 2.0 * FOOT)
+	for row: Dictionary in _tulips:
+		var a: Vector2 = row["a"]
+		var b: Vector2 = row["b"]
+		_add_static(KIND_TULIPS, row, (a + b) / 2.0, -1.0, a.distance_to(b) / 2.0 + FOOT, 2.0 * FOOT)
+	_statics.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
+
+
+## "bias" is in screen pixels: it settles which of two things at the same
+## depth is drawn first. It is applied at the unzoomed scale for the order.
+func _add_static(kind: int, item: Variant, at: Vector2, bias: float, radius: float, height: float) -> void:
+	_statics.append([(at.x - at.y) * 0.5 * _base_scale + bias, bias, kind, item, at.x, at.y, radius, height])
+
+
+func _in_one_lot(points: Array[Vector2]) -> bool:
+	for lot_id: String in area.lots:
+		var lot: PackedVector2Array = PackedVector2Array()
+		for corner: Array in area.lots[lot_id]["boundary"]:
+			lot.append(Vector2(corner[0], corner[1]))
+		var inside: bool = true
+		for point: Vector2 in points:
+			if not Geometry2D.is_point_in_polygon(point, lot):
+				inside = false
+		if inside:
+			return true
+	return false
+
+
+## A cat with a favourite front step and a favourite stretch of fence, and a
+## dog with the run of one back yard. Invented, placed from building IDs
+## (P-023); they are not in the simulation and nothing there knows of them.
+func _plan_animals() -> void:
+	var houses: Array = []
+	for building_id: String in area.sorted_building_ids():
+		if not _is_store(area.buildings[building_id]) and _styles.has(building_id):
+			houses.append(building_id)
+	houses.sort_custom(func(a: String, b: String) -> bool: return absi((a + ":cat").hash()) < absi((b + ":cat").hash()))
+	var cat_home: String = ""
+	for building_id: String in houses:
+		var style: Dictionary = _styles[building_id]
+		var out: Vector2 = style["out"]
+		if not _faces_viewer(out):
+			continue
+		var door: Vector2 = _world_point(area.buildings[building_id]["door"])
+		var along: Vector2 = out.orthogonal()
+		var porch: bool = style["porch"]
+		var seat: Vector2 = door + along * (3.4 if porch else 1.3) * FOOT + out * (4.0 if porch else 1.2) * FOOT
+		var seat_z: float = (1.6 if porch else 1.0) * FOOT
+		var ground: Vector2 = door + along * 1.3 * FOOT + out * ((PORCH_DEPTH + 3.6 * FOOT) if porch else 5.0 * FOOT)
+		# The nearest fence that runs alongside, to walk the top of.
+		var best: Array = []
+		var best_distance: float = 60.0 * FOOT
+		for fence: Array in _fences:
+			var a: Vector2 = fence[0]
+			var b: Vector2 = fence[1]
+			var on: Vector2 = Geometry2D.get_closest_point_to_segment(ground, a, b)
+			var room: float = maxf(on.distance_to(a), on.distance_to(b))
+			if on.distance_to(ground) < best_distance and on.distance_to(ground) > 4.0 * FOOT and room > 12.0 * FOOT:
+				best_distance = on.distance_to(ground)
+				var toward: Vector2 = a if on.distance_to(a) > on.distance_to(b) else b
+				best = [on, on + (toward - on).normalized() * minf(15.0 * FOOT, room - 2.0 * FOOT)]
+		if best.is_empty():
+			continue
+		var top: float = 3.1 * FOOT
+		var hop: Vector2 = best[0]
+		var perch: Vector2 = best[1]
+		_cat = {
+			"route": [Vector3(seat.x, seat.y, seat_z), Vector3(ground.x, ground.y, 0.0), Vector3(hop.x, hop.y, 0.0),
+					Vector3(hop.x, hop.y, top), Vector3(perch.x, perch.y, top)],
+			"coat": [Color(0.86, 0.56, 0.26), Color(0.52, 0.52, 0.55), Color(0.17, 0.16, 0.16), Color(0.93, 0.90, 0.84)][absi((building_id + ":coat").hash()) % 4],
+			"offset": float(absi((building_id + ":cat").hash()) % 64),
+			"face": 1.0 if out.x + out.y >= 0.0 else -1.0,
+		}
+		cat_home = building_id
+		break
+	houses.sort_custom(func(a: String, b: String) -> bool: return absi((a + ":dog").hash()) < absi((b + ":dog").hash()))
+	# First choice: a back yard on the viewer's side of its house, with
+	# plenty of open grass; then whatever there is.
+	for attempt: Array in [[true, 7.0], [true, 5.0], [true, 3.5], [false, 5.0], [false, 3.5]]:
+		var in_view: bool = attempt[0]
+		var gap: float = float(attempt[1]) * FOOT
+		for building_id: String in houses:
+			if not _dog.is_empty() or building_id == cat_home:
+				continue
+			var style: Dictionary = _styles[building_id]
+			var back: Vector2 = -(style["out"] as Vector2)
+			if in_view and not _faces_viewer(back):
+				continue
+			var rect: Rect2 = _rect_of(area.buildings[building_id]["footprint"])
+			var depth: float = rect.size.y if style["along_x"] else rect.size.x
+			var wall: Vector2 = Vector2(1, 0) if style["along_x"] else Vector2(0, 1)
+			# Each: how far behind the house, how far along it, and half the length of the run (feet).
+			for run: Array in [[11.0, 0.0, 9.0], [14.0, 0.0, 9.0], [11.0, 7.0, 8.0], [11.0, -7.0, 8.0], [15.0, 7.0, 7.0], [15.0, -7.0, 7.0], [8.0, 0.0, 7.0]]:
+				var middle: Vector2 = rect.get_center() + back * (depth / 2.0 + float(run[0]) * FOOT) + wall * float(run[1]) * FOOT
+				var spots: Array[Vector2] = []
+				for t: float in [-1.0, -0.5, 0.0, 0.5, 1.0]:
+					spots.append(middle + wall * t * float(run[2]) * FOOT)
+				var clear: bool = _in_one_lot(spots)
+				for spot: Vector2 in spots:
+					if not _yard_spot_clear(spot, gap):
+						clear = false
+				if clear and _dog.is_empty():
+					var coat: int = absi((building_id + ":coat").hash()) % 3
+					_dog = {
+						"a": spots[0], "b": spots[4],
+						"coat": [Color(0.78, 0.60, 0.38), Color(0.47, 0.32, 0.22), Color(0.94, 0.92, 0.87)][coat],
+						"ear": [Color(0.50, 0.35, 0.22), Color(0.28, 0.19, 0.14), Color(0.36, 0.26, 0.20)][coat],
+						"offset": float(absi((building_id + ":dog").hash()) % 22),
+					}
+
+
 func _near_furniture(spot: Vector2, gap: float) -> bool:
 	for walk: Array in _walks:
 		if Geometry2D.get_closest_point_to_segment(spot, walk[0], walk[1]).distance_to(spot) < gap:
@@ -926,12 +1183,288 @@ func _shadow_lean() -> Vector2:
 	return Vector2(t * 0.9, 0.55) * (1.0 + 0.8 * _golden)
 
 
+# --- Noticing what changed since the last frame ---------------------------------
+
+## Compares where people are and whether they are talking with what was drawn
+## last, to start the door swings and waves. Reads the simulation only.
+func _notice_changes() -> void:
+	var now: int = Time.get_ticks_msec()
+	var first_look: bool = _seen_at.is_empty()
+	_inside.clear()
+	for person_id: String in simulation.state.people:
+		var person: Dictionary = simulation.state.people[person_id]
+		var at: String = person["at"]
+		var place: String = person["place_id"]
+		if at == Records.AT_INSIDE:
+			# Who is in each building, and how many of them are asleep.
+			if not _inside.has(place):
+				_inside[place] = [0, 0]
+			_inside[place][0] += 1
+			var doing: Dictionary = person["action"]
+			if not doing.is_empty() and doing["started"] and doing["kind"] == "sleep":
+				_inside[place][1] += 1
+		if not first_look and _seen_at.has(person_id):
+			var before: Array = _seen_at[person_id]
+			if before[0] != at or before[1] != place:
+				if before[0] == Records.AT_INSIDE and area.buildings.has(before[1]):
+					_door_swings[before[1]] = now
+				if at == Records.AT_INSIDE and area.buildings.has(place):
+					_doors_due[person_id] = place
+		_seen_at[person_id] = [at, place]
+		var action: Dictionary = person["action"]
+		var talking: bool = not action.is_empty() and action["kind"] == "talk"
+		if talking and not first_look and not bool(_seen_talking.get(person_id, false)) and at == Records.AT_OUTSIDE:
+			_waves_due[person_id] = true
+		elif not talking:
+			_waves_due.erase(person_id)
+		_seen_talking[person_id] = talking
+	# The figure follows up to a minute behind the simulation, so the door
+	# opens as it reaches the step and the wave waits until it has stopped.
+	for person_id: String in _doors_due.keys():
+		if not _is_walking(person_id) or minute_fraction > 0.8:
+			_door_swings[_doors_due[person_id]] = now
+			_doors_due.erase(person_id)
+	for person_id: String in _waves_due.keys():
+		if not _is_walking(person_id):
+			_waves[person_id] = now
+			_waves_due.erase(person_id)
+
+
+## How far open a building's door is right now, 0 to 1.
+func _door_open(building_id: String) -> float:
+	if not _door_swings.has(building_id):
+		return 0.0
+	var age: int = Time.get_ticks_msec() - int(_door_swings[building_id])
+	if age >= DOOR_SWING_MS:
+		_door_swings.erase(building_id)
+		return 0.0
+	return clampf(float(age) / 180.0, 0.0, 1.0) * clampf(float(DOOR_SWING_MS - age) / 320.0, 0.0, 1.0)
+
+
+# --- Where the selected person has been sent -------------------------------------
+
+func _world_point(point: Array) -> Vector2:
+	return Vector2(float(point[0]), float(point[1]))
+
+
+## Where an order or a journey of this person ends: {"point" (world Vector2),
+## "flag" (building ID whose door gets a flag, or "")}; empty if there is
+## nowhere to show. Reads the person's waiting orders and current action.
+func _order_destination(person: Dictionary) -> Dictionary:
+	var orders: Array = person["orders"]
+	if not orders.is_empty():
+		var order: Dictionary = orders[0]
+		var home: String = simulation.state.households[person["household_id"]]["home_id"]
+		match String(order.get("kind", "")):
+			"go_home", "use_room":
+				return _door_destination(person, home)
+			"go_to", "enter":
+				return _door_destination(person, String(order.get("place_id", "")))
+			"talk_to":
+				var other_id: String = order.get("other_id", "")
+				if not simulation.state.people.has(other_id):
+					return {}
+				var other: Dictionary = simulation.state.people[other_id]
+				if other["at"] == Records.AT_OUTSIDE:
+					return {"point": Vector2(float(other["x"]), float(other["y"])), "flag": ""}
+				if other["at"] == Records.AT_INSIDE:
+					return _door_destination(person, other["place_id"])
+		return {}
+	var action: Dictionary = person["action"]
+	if action.is_empty() or bool(action["started"]):
+		return {}
+	var kind: String = action["kind"]
+	var place: String = action["place_id"]
+	if action["where"] == Records.AT_OUTSIDE and (kind == "go_to" or kind == "visit" or kind == "call_on"):
+		var path: Array = action["path"]
+		var end: Vector2 = Vector2(float(action["tx"]), float(action["ty"])) if path.is_empty() else _world_point(path[path.size() - 1])
+		return {"point": end, "flag": place if area.buildings.has(place) else ""}
+	if action["where"] == Records.AT_INSIDE and action["source"] == "player":
+		return _door_destination(person, place)
+	return {}
+
+
+func _door_destination(person: Dictionary, building_id: String) -> Dictionary:
+	if not area.buildings.has(building_id):
+		return {}
+	if person["at"] == Records.AT_INSIDE and person["place_id"] == building_id:
+		return {}
+	return {"point": _world_point(area.buildings[building_id]["door"]), "flag": building_id}
+
+
+## The rest of the walk a figure is shown making this minute, as screen points.
+## The simulation moves a person a minute at a time and the figure follows
+## along behind, so someone who has "arrived" may still be seen walking.
+func _trail_ahead(person: Dictionary) -> Array[Vector2]:
+	var ahead: Array[Vector2] = []
+	var trail: Array = _trails.get(person["id"], [])
+	if trail.size() < 2 or minute_fraction >= 1.0:
+		return ahead
+	var total: float = 0.0
+	for index: int in trail.size() - 1:
+		total += to_screen(trail[index]).distance_to(to_screen(trail[index + 1]))
+	var remaining: float = total * minute_fraction
+	for index: int in trail.size() - 1:
+		var length: float = to_screen(trail[index]).distance_to(to_screen(trail[index + 1]))
+		if remaining <= length and length > 0.0:
+			for later: int in range(index + 1, trail.size()):
+				ahead.append(to_screen(trail[later]))
+			return ahead
+		remaining -= length
+	return ahead
+
+
+## Works out the mark for the selected person, if they are one of the
+## player's household, and keeps the last one a moment so it can fade out.
+## Points are kept as unscaled isometric points so they stay put on the ground.
+func _update_order_mark() -> void:
+	var now: int = Time.get_ticks_msec()
+	if not _order_mark.is_empty() and _order_mark["person_id"] != selected_id:
+		_order_mark = {}
+	var destination: Dictionary = {}
+	var person: Dictionary = simulation.state.people.get(selected_id, {})
+	var walking: bool = false
+	if not person.is_empty() and simulation.state.households[person["household_id"]]["player_controlled"]:
+		walking = _is_walking(selected_id)
+		if person["at"] != Records.AT_OFFMAP:
+			destination = _order_destination(person)
+	# Still good while the figure walks the last of the way there.
+	var finishing: bool = destination.is_empty() and walking and not _order_mark.is_empty() and bool(_order_mark["live"])
+	if destination.is_empty() and not finishing:
+		if not _order_mark.is_empty():
+			_order_mark["live"] = false
+			if now - int(_order_mark["seen"]) > ORDER_FADE_OUT_MS:
+				_order_mark = {}
+		return
+	var line: Array[Vector2] = []
+	if _screen_positions.has(selected_id):
+		line.append(_screen_positions[selected_id])
+		line.append_array(_trail_ahead(person))
+	elif person["at"] == Records.AT_INSIDE:
+		line.append(to_screen(area.buildings[person["place_id"]]["door"]))
+	else:
+		line.append(to_screen([person["x"], person["y"]]))
+	var flag: String = _order_mark["flag"] if finishing else destination["flag"]
+	if not finishing:
+		var action: Dictionary = person["action"]
+		if person["orders"].is_empty() and not action.is_empty():
+			for waypoint: Array in action["path"]:
+				line.append(to_screen(waypoint))
+		var end: Vector2 = _iso((destination["point"] as Vector2).x, (destination["point"] as Vector2).y)
+		if line[line.size() - 1].distance_to(end) > 2.0:
+			line.append(end)
+	var points: Array[Vector2] = []
+	for point: Vector2 in line:
+		points.append(_iso_of_screen(point))
+	var born: int = now
+	if not _order_mark.is_empty() and bool(_order_mark["live"]):
+		born = _order_mark["born"]
+	_order_mark = {"person_id": selected_id, "points": points, "flag": flag, "born": born, "seen": now, "live": true}
+
+
+## 0 to 1: fades in when the order is given and out once the person arrives.
+func _order_mark_alpha() -> float:
+	if _order_mark.is_empty():
+		return 0.0
+	var now: int = Time.get_ticks_msec()
+	var fade_in: float = clampf(float(now - int(_order_mark["born"])) / float(ORDER_FADE_IN_MS), 0.0, 1.0)
+	var fade_out: float = 1.0 - clampf(float(now - int(_order_mark["seen"])) / float(ORDER_FADE_OUT_MS), 0.0, 1.0)
+	return fade_in * fade_out
+
+
+## On the ground: a soft dashed line from the person to where they are going,
+## the dashes drifting that way, and a pulsing ring at the end of it.
+func _draw_order_path() -> void:
+	var alpha: float = _order_mark_alpha()
+	if alpha <= 0.01:
+		return
+	var line: PackedVector2Array = PackedVector2Array()
+	for point: Vector2 in _order_mark["points"]:
+		line.append(point * _scale + _offset)
+	var total: float = 0.0
+	for index: int in line.size() - 1:
+		total += line[index].distance_to(line[index + 1])
+	var end: Vector2 = line[line.size() - 1]
+	var now: float = float(Time.get_ticks_msec())
+	var size: float = clampf(sqrt(_zoom), 0.9, 1.7)
+	_draw_order_ring(end, alpha)
+	var skip: float = 9.0 * size
+	if line.size() < 2 or total < skip * 2.0 + 4.0:
+		return
+	var dash: float = 6.0 * size
+	var period: float = 12.0 * size
+	var dashes: PackedVector2Array = PackedVector2Array()
+	var segment: int = 0
+	var before: float = 0.0
+	var d: float = skip + fmod(now / 1000.0 * 16.0 * size, period) - period
+	while d < total - skip:
+		var ends: Array[Vector2] = []
+		for s: float in [maxf(d, skip), minf(d + dash, total - skip)]:
+			while segment < line.size() - 2 and s > before + line[segment].distance_to(line[segment + 1]):
+				before += line[segment].distance_to(line[segment + 1])
+				segment += 1
+			var length: float = line[segment].distance_to(line[segment + 1])
+			ends.append(line[segment].lerp(line[segment + 1], clampf((s - before) / maxf(length, 0.001), 0.0, 1.0)))
+		if ends[0].distance_to(ends[1]) > 1.0:
+			dashes.append(ends[0])
+			dashes.append(ends[1])
+		d += period
+	if dashes.size() >= 2:
+		draw_multiline(dashes, Color(TEAL_DARK, 0.30 * alpha), 4.0 * size, true)
+		draw_multiline(dashes, Color(1.0, 0.93, 0.70, 0.92 * alpha), 2.0 * size, true)
+
+
+## The pulsing ring on the ground where the selected person is headed.
+func _draw_order_ring(at: Vector2, alpha: float) -> void:
+	var now: float = float(Time.get_ticks_msec())
+	var size: float = clampf(sqrt(_zoom), 0.9, 1.7)
+	var pulse: float = 0.5 + 0.5 * sin(now / 260.0)
+	draw_set_transform(at, 0.0, Vector2(1.0, 0.5))
+	draw_circle(Vector2.ZERO, (9.0 + 2.5 * pulse) * size, Color(MUSTARD, 0.22 * alpha))
+	draw_arc(Vector2.ZERO, (9.0 + 2.5 * pulse) * size, 0.0, TAU, 28, Color(1, 1, 1, 0.55 * alpha), 3.6, true)
+	draw_arc(Vector2.ZERO, (9.0 + 2.5 * pulse) * size, 0.0, TAU, 28, Color(MUSTARD, 0.95 * alpha), 2.0, true)
+	var spread: float = fmod(now / 1100.0, 1.0)
+	draw_arc(Vector2.ZERO, (9.0 + 12.0 * spread) * size, 0.0, TAU, 28, Color(MUSTARD, 0.5 * (1.0 - spread) * alpha), 1.4, true)
+	draw_circle(Vector2.ZERO, 2.2 * size, Color(MUSTARD, 0.9 * alpha))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Over everything: a small flag above the door of the building they were
+## sent to; or, with no building, the ring again, faintly, so that it shows
+## through a tree or a house standing in front of it.
+func _draw_order_flag() -> void:
+	var alpha: float = _order_mark_alpha()
+	if alpha <= 0.01:
+		return
+	if String(_order_mark["flag"]) == "":
+		var points: Array[Vector2] = _order_mark["points"]
+		_draw_order_ring(points[points.size() - 1] * _scale + _offset, alpha * 0.3)
+		return
+	var building: Dictionary = area.buildings[_order_mark["flag"]]
+	var door: Vector2 = _world_point(building["door"])
+	var now: float = float(Time.get_ticks_msec())
+	var size: float = clampf(sqrt(_zoom), 0.9, 1.6)
+	var foot: Vector2 = _pv(door, 9.6 * FOOT) - Vector2(0, 2.0 + 1.5 * sin(now / 300.0))
+	var top: Vector2 = foot - Vector2(0, 17.0 * size)
+	var flutter: float = sin(now / 170.0) * 1.6 * size
+	draw_line(foot + Vector2(1, 1), top + Vector2(1, 1), Color(0, 0, 0, 0.25 * alpha), 2.0)
+	draw_line(foot, top, Color(INK, alpha), 2.0)
+	var pennant: PackedVector2Array = PackedVector2Array([top, top + Vector2(11.0 * size, 3.5 * size + flutter), top + Vector2(0, 8.0 * size)])
+	_fill(pennant, Color(MUSTARD, alpha))
+	_outline(pennant, Color(INK, alpha))
+	draw_circle(top, 1.6 * size, Color(CHERRY, alpha))
+	draw_circle(foot, 2.0 * size, Color(MUSTARD, alpha))
+	draw_arc(foot, 2.0 * size, 0.0, TAU, 12, Color(INK, alpha), 1.0, true)
+
+
 # --- Drawing -----------------------------------------------------------------
 
 func _draw() -> void:
 	if simulation == null:
 		return
 	_update_light()
+	_notice_changes()
+	_check_view_caches()
 	_building_shapes.clear()
 	if selected_id != _selected_seen:
 		_selected_seen = selected_id
@@ -940,7 +1473,7 @@ func _draw() -> void:
 	_draw_tufts()
 	for lot_id: String in area.lots:
 		var lot: PackedVector2Array = _polygon(area.lots[lot_id]["boundary"])
-		draw_colored_polygon(lot, _tint(COLOR_LAWN))
+		_fill(lot, _tint(COLOR_LAWN))
 	_draw_lawn_texture()
 	for street_id: String in area.streets:
 		_draw_street(area.streets[street_id])
@@ -959,84 +1492,79 @@ func _draw() -> void:
 	_draw_glints()
 	_draw_haze()
 	_layout_people()
+	_update_order_mark()
+	_draw_order_path()
 
-	# Everything that stands up, from the back of the view to the front.
-	var drawables: Array = []
+	# Everything that stands up, from the back of the view to the front: the
+	# things that stand still are already in order, and the few that move
+	# (people, the cat, the dog) are slipped in where they belong.
 	var home_id: String = _player_home()
-	for building_id: String in area.sorted_building_ids():
-		var rect: Rect2 = _rect_of(area.buildings[building_id]["footprint"])
-		drawables.append({"key": _iso(rect.get_center().x, rect.get_center().y).y, "kind": "building", "id": building_id})
-	for tree: Dictionary in _trees:
-		drawables.append({"key": _iso(tree["x"], tree["y"]).y, "kind": "tree", "item": tree})
-	for shrub: Dictionary in _shrubs:
-		drawables.append({"key": _iso(shrub["x"], shrub["y"]).y, "kind": "shrub", "item": shrub})
-	for lamp: Dictionary in _lamps:
-		drawables.append({"key": _iso(lamp["x"], lamp["y"]).y, "kind": "lamp", "item": lamp})
-	for car: Dictionary in _cars:
-		drawables.append({"key": _iso(car["x"], car["y"]).y, "kind": "car", "item": car})
-	for bed: Dictionary in _flowers:
-		drawables.append({"key": _iso(bed["x"], bed["y"]).y - 1.0, "kind": "flowers", "item": bed})
-	for mailbox: Dictionary in _mailboxes:
-		drawables.append({"key": _iso(mailbox["x"], mailbox["y"]).y, "kind": "mailbox", "item": mailbox})
-	for line: Dictionary in _clotheslines:
-		var line_middle: Vector2 = ((line["a"] as Vector2) + (line["b"] as Vector2)) / 2.0
-		drawables.append({"key": _iso(line_middle.x, line_middle.y).y, "kind": "clothesline", "item": line})
-	for fence: Array in _fences:
-		var middle: Vector2 = ((fence[0] as Vector2) + (fence[1] as Vector2)) / 2.0
-		drawables.append({"key": _iso(middle.x, middle.y).y - 2.0, "kind": "fence", "item": fence})
+	var moving: Array = []  # [depth on screen, kind, person ID]
 	for person_id: String in _screen_positions:
-		drawables.append({"key": (_screen_positions[person_id] as Vector2).y + 0.5, "kind": "person", "id": person_id})
-	for kind: String in ["pole", "hydrant", "can", "bicycle", "wagon"]:
-		var things: Array = {"pole": _poles, "hydrant": _hydrants, "can": _cans, "bicycle": _bicycles, "wagon": _wagons}[kind]
-		for thing: Dictionary in things:
-			drawables.append({"key": _iso(thing["x"], thing["y"]).y, "kind": kind, "item": thing})
-	for wire: Dictionary in _wires:
-		var middle: Vector2 = (wire["a"] as Vector2).lerp(wire["b"], (float(wire["t0"]) + float(wire["t1"])) / 2.0)
-		drawables.append({"key": _iso(middle.x, middle.y).y + 0.2, "kind": "wire", "item": wire})
-	if _spring:
-		for row: Dictionary in _tulips:
-			var row_middle: Vector2 = ((row["a"] as Vector2) + (row["b"] as Vector2)) / 2.0
-			drawables.append({"key": _iso(row_middle.x, row_middle.y).y - 1.0, "kind": "tulips", "item": row})
-	drawables.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["key"]) < float(b["key"]))
+		moving.append([(_screen_positions[person_id] as Vector2).y + 0.5, KIND_PERSON, person_id])
+	_place_animals()
+	if not _cat_now.is_empty():
+		moving.append([_iso((_cat_now["at"] as Vector3).x, (_cat_now["at"] as Vector3).y).y + 0.3, KIND_CAT, ""])
+	if not _dog_now.is_empty():
+		moving.append([_iso((_dog_now["at"] as Vector3).x, (_dog_now["at"] as Vector3).y).y + 0.3, KIND_DOG, ""])
+	moving.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) < float(b[0]))
 
 	_draw_talk_lines()
 	var hovered: Dictionary = _hovered()
-	for item: Dictionary in drawables:
-		match item["kind"]:
-			"building":
-				_draw_building(area.buildings[item["id"]], item["id"] == home_id, hovered.get("building", "") == item["id"])
-			"tree":
-				_draw_tree(item["item"])
-			"shrub":
-				_draw_shrub(item["item"])
-			"lamp":
-				_draw_lamp(item["item"])
-			"car":
-				_draw_car(item["item"])
-			"fence":
-				_draw_fence(item["item"])
-			"flowers":
-				_draw_flowers(item["item"])
-			"mailbox":
-				_draw_mailbox(item["item"])
-			"clothesline":
-				_draw_clothesline(item["item"])
-			"person":
-				_draw_person(simulation.state.people[item["id"]], hovered.get("person", "") == item["id"])
-			"pole":
-				_draw_pole(item["item"])
-			"wire":
-				_draw_wire(item["item"])
-			"hydrant":
-				_draw_hydrant(item["item"])
-			"can":
-				_draw_can(item["item"])
-			"bicycle":
-				_draw_bicycle(item["item"])
-			"wagon":
-				_draw_wagon(item["item"])
-			"tulips":
-				_draw_tulips(item["item"])
+	var hovered_person: String = hovered.get("person", "")
+	var hovered_building: String = hovered.get("building", "")
+	var next: int = 0
+	var half: float = 0.5 * _scale
+	for entry: Array in _statics:
+		var x: float = entry[4]
+		var y: float = entry[5]
+		var depth: float = (x - y) * half + _offset.y
+		while next < moving.size() and float(moving[next][0]) < depth + float(entry[1]):
+			_draw_moving(moving[next], hovered_person)
+			next += 1
+		# Skip what is wholly off the screen.
+		var reach: float = float(entry[6]) * _scale
+		var across: float = (x + y) * _scale + _offset.x
+		if across + reach * 1.5 + 40.0 < 0.0 or across - reach * 1.5 - 40.0 > VIEW_SIZE.x \
+				or depth + reach * 0.75 + 40.0 < 0.0 or depth - reach * 0.75 - float(entry[7]) * _scale - 40.0 > VIEW_SIZE.y:
+			continue
+		match int(entry[2]):
+			KIND_BUILDING:
+				_draw_building(area.buildings[entry[3]], entry[3] == home_id, hovered_building == entry[3])
+			KIND_TREE:
+				_draw_tree(entry[3])
+			KIND_SHRUB:
+				_draw_shrub(entry[3])
+			KIND_LAMP:
+				_draw_lamp(entry[3])
+			KIND_CAR:
+				_draw_car(entry[3])
+			KIND_FENCE:
+				_draw_fence(entry[3])
+			KIND_FLOWERS:
+				_draw_flowers(entry[3])
+			KIND_MAILBOX:
+				_draw_mailbox(entry[3])
+			KIND_CLOTHESLINE:
+				_draw_clothesline(entry[3])
+			KIND_POLE:
+				_draw_pole(entry[3])
+			KIND_WIRE:
+				_draw_wire(entry[3])
+			KIND_HYDRANT:
+				_draw_hydrant(entry[3])
+			KIND_CAN:
+				_draw_can(entry[3])
+			KIND_BICYCLE:
+				_draw_bicycle(entry[3])
+			KIND_WAGON:
+				_draw_wagon(entry[3])
+			KIND_TULIPS:
+				if _spring:
+					_draw_tulips(entry[3])
+	while next < moving.size():
+		_draw_moving(moving[next], hovered_person)
+		next += 1
 
 	_draw_smoke()
 	_draw_birds()
@@ -1044,6 +1572,8 @@ func _draw() -> void:
 	_draw_vignette()
 	_draw_street_names()
 	_draw_building_badges(home_id)
+	_draw_order_flag()
+	_draw_ripples()
 	_draw_bubbles()
 	_draw_hover_label(hovered)
 	_draw_interior()
@@ -1051,6 +1581,30 @@ func _draw() -> void:
 	_draw_floats()
 	_draw_toasts()
 	_draw_follow_pill()
+
+
+func _draw_moving(entry: Array, hovered_person: String) -> void:
+	match int(entry[1]):
+		KIND_PERSON:
+			_draw_person(simulation.state.people[entry[2]], hovered_person == entry[2])
+		KIND_CAT:
+			_draw_cat()
+		KIND_DOG:
+			_draw_dog()
+
+
+## Forgets the screen geometry that was worked out for another zoom or pan.
+func _check_view_caches() -> void:
+	var key: Vector3 = Vector3(_scale, _offset.x, _offset.y)
+	if key == _view_key:
+		return
+	_view_key = key
+	_tuft_lines.clear()
+	_stripe_shapes.clear()
+	_fence_lines.clear()
+	_fence_lines.resize(_fences.size())
+	_wire_lines.clear()
+	_wire_lines.resize(_wires.size())
 
 
 func _polygon(points: Array, lift: float = 0.0) -> PackedVector2Array:
@@ -1067,9 +1621,36 @@ func _closed(points: PackedVector2Array) -> PackedVector2Array:
 
 
 func _face(points: PackedVector2Array, fill: Color, edge: Color = Color(0, 0, 0, 0)) -> void:
-	draw_colored_polygon(points, fill)
+	_fill(points, fill)
 	if edge.a > 0.0:
-		draw_polyline(_closed(points), edge, 1.0, true)
+		_outline(points, edge)
+
+
+## A filled shape in one colour. Triangles and four-sided shapes (which must
+## bulge outward everywhere, as walls, panes and roofs do) go to the renderer
+## as they are, which is many times cheaper than handing it a polygon to cut up.
+func _fill(points: PackedVector2Array, color: Color) -> void:
+	if points.size() <= 4:
+		_one_color[0] = color
+		draw_primitive(points, _one_color, _no_uvs)
+	else:
+		draw_colored_polygon(points, color)
+
+
+## A small round dot. One too small to look round is drawn as a square,
+## which costs the renderer far less than a circle.
+func _dot(at: Vector2, radius: float, color: Color) -> void:
+	if radius < 1.8:
+		draw_rect(Rect2(at.x - radius, at.y - radius, radius * 2.0, radius * 2.0), color)
+	else:
+		draw_circle(at, radius, color)
+
+
+## A thin smooth line around a shape.
+func _outline(points: PackedVector2Array, color: Color) -> void:
+	var count: int = points.size()
+	for index: int in count:
+		draw_line(points[index], points[(index + 1) % count], color, 1.0, true)
 
 
 func _ellipse(centre: Vector2, radius: float, flat: float, color: Color) -> void:
@@ -1083,20 +1664,33 @@ func _draw_strip(a: Vector2, b: Vector2, width: float, color: Color) -> void:
 	if a.distance_to(b) < 1.0:
 		return
 	var side: Vector2 = (b - a).normalized().orthogonal() * width / 2.0
-	draw_colored_polygon(PackedVector2Array([
+	_fill(PackedVector2Array([
 		_iso(a.x + side.x, a.y + side.y), _iso(b.x + side.x, b.y + side.y),
 		_iso(b.x - side.x, b.y - side.y), _iso(a.x - side.x, a.y - side.y)]), color)
 
 
 func _draw_tufts() -> void:
-	var dark: Color = _tint(COLOR_GRASS_DARK)
-	var light: Color = _tint(COLOR_GRASS_LIGHT)
-	var length: float = clampf(2.0 * _zoom, 1.5, 4.0)
-	for tuft: Dictionary in _tufts:
-		var at: Vector2 = _iso(tuft["x"], tuft["y"])
-		if at.x < -5.0 or at.y < -5.0 or at.x > VIEW_SIZE.x + 5.0 or at.y > VIEW_SIZE.y + 5.0:
-			continue
-		draw_line(at, at + Vector2(0.6, -length), light if tuft["light"] else dark, 1.0)
+	if _tuft_lines.is_empty():
+		# One batch of little strokes for the light tufts and one for the dark.
+		var length: float = clampf(2.0 * _zoom, 1.5, 4.0)
+		var stroke: Vector2 = Vector2(0.6, -length)
+		var light_lines: PackedVector2Array = PackedVector2Array()
+		var dark_lines: PackedVector2Array = PackedVector2Array()
+		for tuft: Dictionary in _tufts:
+			var at: Vector2 = _iso(tuft["x"], tuft["y"])
+			if at.x < -5.0 or at.y < -5.0 or at.x > VIEW_SIZE.x + 5.0 or at.y > VIEW_SIZE.y + 5.0:
+				continue
+			if tuft["light"]:
+				light_lines.append(at)
+				light_lines.append(at + stroke)
+			else:
+				dark_lines.append(at)
+				dark_lines.append(at + stroke)
+		_tuft_lines = [light_lines, dark_lines]
+	if _tuft_lines[0].size() >= 2:
+		draw_multiline(_tuft_lines[0], _tint(COLOR_GRASS_LIGHT), 1.0)
+	if _tuft_lines[1].size() >= 2:
+		draw_multiline(_tuft_lines[1], _tint(COLOR_GRASS_DARK), 1.0)
 
 
 func _draw_street(street: Dictionary) -> void:
@@ -1155,7 +1749,7 @@ func _draw_shadows() -> void:
 		return
 	var shade: Color = Color(0.10, 0.12, 0.08, strength)
 	var lean: Vector2 = _shadow_lean()
-	for building_id: String in area.sorted_building_ids():
+	for building_id: String in _building_ids:
 		var building: Dictionary = area.buildings[building_id]
 		var reach: Vector2 = lean * (_wall_height(building) + _roof_rise(building) * 0.5)
 		var points: PackedVector2Array = PackedVector2Array()
@@ -1164,7 +1758,7 @@ func _draw_shadows() -> void:
 			points.append(_iso(float(point[0]) + reach.x, float(point[1]) + reach.y))
 		var hull: PackedVector2Array = Geometry2D.convex_hull(points)
 		if hull.size() >= 3:
-			draw_colored_polygon(hull, shade)
+			_fill(hull, shade)
 	for tree: Dictionary in _trees:
 		var reach: Vector2 = lean * float(tree["size"]) * 1.6
 		var at: Vector2 = _iso(float(tree["x"]) + reach.x, float(tree["y"]) + reach.y)
@@ -1196,7 +1790,7 @@ func _is_store(building: Dictionary) -> bool:
 func _roof_rise(building: Dictionary) -> float:
 	if _is_store(building):
 		return 2.0 * FOOT
-	var rect: Rect2 = _rect_of(building["footprint"])
+	var rect: Rect2 = _building_rect(building)
 	return minf(rect.size.x, rect.size.y) * 0.38
 
 
@@ -1217,16 +1811,13 @@ func _occupants(building_id: String) -> Array:
 
 
 func _anyone_awake(building_id: String) -> bool:
-	for person: Dictionary in _occupants(building_id):
-		var action: Dictionary = person["action"]
-		if action.is_empty() or not (action["started"] and action["kind"] == "sleep"):
-			return true
-	return false
+	var counts: Array = _inside.get(building_id, [0, 0])
+	return int(counts[0]) > int(counts[1])
 
 
 func _draw_building(building: Dictionary, is_home: bool, hovered: bool) -> void:
 	var id: String = building["id"]
-	var rect: Rect2 = _rect_of(building["footprint"])
+	var rect: Rect2 = _building_rect(building)
 	var x0: float = rect.position.x
 	var x1: float = rect.end.x
 	var y0: float = rect.position.y
@@ -1332,10 +1923,10 @@ func _draw_wall_openings(building: Dictionary, a: Vector2, b: Vector2, lit: bool
 				for side: Array in [[p - along * 0.95 * FOOT, p - along * 0.15 * FOOT], [q + along * 0.15 * FOOT, q + along * 0.95 * FOOT]]:
 					var s0: Vector2 = side[0]
 					var s1: Vector2 = side[1]
-					draw_colored_polygon(PackedVector2Array([_p3(s0.x, s0.y, low - 0.2 * FOOT), _p3(s1.x, s1.y, low - 0.2 * FOOT),
+					_fill(PackedVector2Array([_p3(s0.x, s0.y, low - 0.2 * FOOT), _p3(s1.x, s1.y, low - 0.2 * FOOT),
 							_p3(s1.x, s1.y, high + 0.2 * FOOT), _p3(s0.x, s0.y, high + 0.2 * FOOT)]), shutter)
 			var pane: PackedVector2Array = PackedVector2Array([_p3(p.x, p.y, low), _p3(q.x, q.y, low), _p3(q.x, q.y, high), _p3(p.x, p.y, high)])
-			draw_colored_polygon(pane, glass)
+			_fill(pane, glass)
 			if not lit and detailed:
 				# A pale streak of reflected sky.
 				draw_line(_p3(p.x, p.y, low + (high - low) * 0.35).lerp(_p3(q.x, q.y, low), 0.1),
@@ -1344,7 +1935,7 @@ func _draw_wall_openings(building: Dictionary, a: Vector2, b: Vector2, lit: bool
 				_draw_curtains(p, q, low, high, style, lit)
 			if store and story == 0 and detailed:
 				_draw_shop_window(p, q, low, high)
-			draw_polyline(_closed(pane), frame, 1.0, true)
+			_outline(pane, frame)
 			var mid: Vector2 = (p + q) / 2.0
 			draw_line(_p3(mid.x, mid.y, low), _p3(mid.x, mid.y, high), frame, 1.0)
 			# Sill.
@@ -1358,13 +1949,25 @@ func _draw_wall_openings(building: Dictionary, a: Vector2, b: Vector2, lit: bool
 		var q: Vector2 = a + along * (at + 1.8 * FOOT)
 		var color: Color = _tint(_pick(DOORS, building["id"] + "door"))
 		var leaf: PackedVector2Array = PackedVector2Array([_p3(p.x, p.y, 0), _p3(q.x, q.y, 0), _p3(q.x, q.y, 7.0 * FOOT), _p3(p.x, p.y, 7.0 * FOOT)])
-		draw_colored_polygon(leaf, color)
-		draw_polyline(_closed(leaf), frame, 1.0, true)
-		if _scale * FOOT >= 1.6:
+		var open: float = _door_open(building["id"])
+		if open > 0.0:
+			# Someone is going in or out: a dark doorway (warm if the lights
+			# are on) and the door swung out on its hinges, seen edge-on.
+			_fill(leaf, Color(0.62, 0.45, 0.22) if lit else _tint(Color(0.13, 0.10, 0.09)))
+			_outline(leaf, frame)
+			var angle: float = open * 1.4
+			var tip: Vector2 = p + (along * cos(angle) + along.orthogonal() * sin(angle)) * 3.6 * FOOT
+			var swung: PackedVector2Array = PackedVector2Array([_p3(p.x, p.y, 0), _p3(tip.x, tip.y, 0), _p3(tip.x, tip.y, 7.0 * FOOT), _p3(p.x, p.y, 7.0 * FOOT)])
+			_fill(swung, color.darkened(0.12))
+			_outline(swung, frame)
+		else:
+			_fill(leaf, color)
+			_outline(leaf, frame)
+		if open <= 0.0 and _scale * FOOT >= 1.6:
 			# A small window in the door and a brass knob.
 			var w0: Vector2 = p.lerp(q, 0.28)
 			var w1: Vector2 = p.lerp(q, 0.72)
-			draw_colored_polygon(PackedVector2Array([_p3(w0.x, w0.y, 4.6 * FOOT), _p3(w1.x, w1.y, 4.6 * FOOT),
+			_fill(PackedVector2Array([_p3(w0.x, w0.y, 4.6 * FOOT), _p3(w1.x, w1.y, 4.6 * FOOT),
 					_p3(w1.x, w1.y, 6.2 * FOOT), _p3(w0.x, w0.y, 6.2 * FOOT)]), glass)
 			var knob: Vector2 = p.lerp(q, 0.82)
 			draw_circle(_p3(knob.x, knob.y, 3.4 * FOOT), maxf(1.0, 0.22 * FOOT * _scale), _tint(Color(0.85, 0.70, 0.30)))
@@ -1376,7 +1979,7 @@ func _draw_wall_openings(building: Dictionary, a: Vector2, b: Vector2, lit: bool
 			var hood: PackedVector2Array = PackedVector2Array([
 				_p3(hp.x, hp.y, 9.2 * FOOT), _p3(hq.x, hq.y, 9.2 * FOOT),
 				_p3(hq.x + out.x, hq.y + out.y, 8.3 * FOOT), _p3(hp.x + out.x, hp.y + out.y, 8.3 * FOOT)])
-			draw_colored_polygon(hood, _tint(_pick(ROOFS, building["id"] + "roof").lightened(0.1)))
+			_fill(hood, _tint(_pick(ROOFS, building["id"] + "roof").lightened(0.1)))
 			draw_line(hood[3], hood[2], frame, maxf(1.0, 0.3 * FOOT * _scale))
 			for end: Vector2 in [hp, hq]:
 				draw_line(_p3(end.x + out.x, end.y + out.y, 8.3 * FOOT), _p3(end.x, end.y, 7.4 * FOOT), frame, 1.0)
@@ -1442,8 +2045,8 @@ func _draw_gable_window(a: Vector2, b: Vector2, h: float, rise: float) -> void:
 	var low: float = h + rise * 0.2
 	var high: float = h + rise * 0.55
 	var pane: PackedVector2Array = PackedVector2Array([_p3(p.x, p.y, low), _p3(q.x, q.y, low), _p3(q.x, q.y, high), _p3(p.x, p.y, high)])
-	draw_colored_polygon(pane, _tint(COLOR_GLASS.darkened(0.2)))
-	draw_polyline(_closed(pane), _tint(COLOR_TRIM), 1.0, true)
+	_fill(pane, _tint(COLOR_GLASS.darkened(0.2)))
+	_outline(pane, _tint(COLOR_TRIM))
 
 
 ## Faint rows of shingles across a roof face (corners 0 and 1 are the eave).
@@ -1459,7 +2062,7 @@ func _draw_shingles(face: PackedVector2Array, roof: Color) -> void:
 ## Where a house's chimney stands (x, y) and how high its top is (z), in
 ## world inches. It sits on the back slope of the gable roof.
 func _chimney_top(building: Dictionary) -> Vector3:
-	var rect: Rect2 = _rect_of(building["footprint"])
+	var rect: Rect2 = _building_rect(building)
 	var top: float = _wall_height(building) + _roof_rise(building) + 2.0 * FOOT
 	if rect.size.y >= rect.size.x:
 		return Vector3(rect.get_center().x + rect.size.x * 0.18, rect.position.y + rect.size.y * 0.65, top)
@@ -1483,7 +2086,7 @@ func _draw_chimney(spot: Vector3, base: float) -> void:
 
 
 func _draw_store_sign(building: Dictionary, top: float) -> void:
-	var rect: Rect2 = _rect_of(building["footprint"])
+	var rect: Rect2 = _building_rect(building)
 	var open: bool = area.is_open(building["id"], simulation.clock.weekday(), simulation.clock.minute_of_day)
 	var name: String = area.institutions[building["id"]]["name"]
 	var at: Vector2 = _p3(rect.get_center().x, rect.get_center().y, top) - Vector2(0, 14.0 * sqrt(_zoom))
@@ -1492,8 +2095,9 @@ func _draw_store_sign(building: Dictionary, top: float) -> void:
 	var board: Rect2 = Rect2(at - Vector2(width / 2.0, size + 6.0), Vector2(width, size + 8.0))
 	draw_line(board.end - Vector2(6, 0), board.end - Vector2(6, -10), _tint(COLOR_OUTLINE), 2.0)
 	draw_line(Vector2(board.position.x + 6, board.end.y), Vector2(board.position.x + 6, board.end.y + 10), _tint(COLOR_OUTLINE), 2.0)
-	var sign: StyleBoxFlat = _box(_tint(Color(0.96, 0.92, 0.80)), _tint(CHERRY), 2, 4)
-	draw_style_box(sign, board)
+	_sign_box.bg_color = _tint(Color(0.96, 0.92, 0.80))
+	_sign_box.border_color = _tint(CHERRY)
+	draw_style_box(_sign_box, board)
 	draw_string(_font, board.position + Vector2(7, size + 1.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, size, _tint(CHERRY.darkened(0.2)))
 	var tag: String = "OPEN" if open else "CLOSED"
 	var tag_size: int = size - 2
@@ -1502,29 +2106,28 @@ func _draw_store_sign(building: Dictionary, top: float) -> void:
 	var tag_fill: Color = Color(0.25, 0.60, 0.30) if open else Color(0.45, 0.42, 0.40)
 	if open and _night > 0.2:
 		draw_circle(tag_rect.get_center(), tag_width * 0.8, Color(0.4, 1.0, 0.5, 0.10))
-	draw_style_box(_box(tag_fill, Color(1, 1, 1, 0.7), 1, 4), tag_rect)
+	_tag_box.bg_color = tag_fill
+	draw_style_box(_tag_box, tag_rect)
 	draw_string(_font, tag_rect.position + Vector2(5, tag_size + 1.0), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, tag_size, Color.WHITE)
 
 
 ## Small pills over houses: how many are inside, and which house is yours.
 func _draw_building_badges(home_id: String) -> void:
-	for building_id: String in area.sorted_building_ids():
+	for building_id: String in _building_ids:
 		var building: Dictionary = area.buildings[building_id]
-		var rect: Rect2 = _rect_of(building["footprint"])
+		var rect: Rect2 = _building_rect(building)
 		var top: Vector2 = _p3(rect.get_center().x, rect.get_center().y, _wall_height(building) + _roof_rise(building))
 		var lines: Array[String] = []
-		var inside: Array = _occupants(building_id)
-		if not inside.is_empty():
-			var asleep: int = 0
-			for person: Dictionary in inside:
-				if not person["action"].is_empty() and person["action"]["started"] and person["action"]["kind"] == "sleep":
-					asleep += 1
-			if asleep == inside.size():
+		var counts: Array = _inside.get(building_id, [0, 0])
+		var inside: int = counts[0]
+		var asleep: int = counts[1]
+		if inside > 0:
+			if asleep == inside:
 				lines.append("%d asleep" % asleep)
 			elif asleep > 0:
-				lines.append("%d in, %d asleep" % [inside.size(), asleep])
+				lines.append("%d in, %d asleep" % [inside, asleep])
 			else:
-				lines.append("%d inside" % inside.size())
+				lines.append("%d inside" % inside)
 		var lift: float = 38.0 * sqrt(_zoom) if _is_store(building) else 10.0
 		if building_id == home_id:
 			var text: String = "Your home"
@@ -1598,16 +2201,18 @@ func _draw_curtains(p: Vector2, q: Vector2, low: float, high: float, style: Dict
 	cloth.a = 0.9
 	var span: float = high - low
 	if style.get("cafe", false):
-		draw_colored_polygon(PackedVector2Array([_pv(p, low), _pv(q, low), _pv(q, low + span * 0.48), _pv(p, low + span * 0.48)]), cloth)
+		_fill(PackedVector2Array([_pv(p, low), _pv(q, low), _pv(q, low + span * 0.48), _pv(p, low + span * 0.48)]), cloth)
 		draw_line(_pv(p, low + span * 0.48), _pv(q, low + span * 0.48), Color(cloth.darkened(0.2), 0.9), 1.0)
 	else:
 		for side: Array in [[p, q], [q, p]]:
 			var edge: Vector2 = side[0]
 			var other: Vector2 = side[1]
-			draw_colored_polygon(PackedVector2Array([
-				_pv(edge, high), _pv(edge.lerp(other, 0.3), high), _pv(edge.lerp(other, 0.1), low + span * 0.45),
-				_pv(edge.lerp(other, 0.16), low), _pv(edge, low)]), cloth)
-	draw_colored_polygon(PackedVector2Array([_pv(p, high), _pv(q, high), _pv(q, high - span * 0.14), _pv(p, high - span * 0.14)]), cloth.darkened(0.06))
+			# Gathered at the waist: drawn as an upper and a lower piece.
+			var waist: Vector2 = _pv(edge.lerp(other, 0.1), low + span * 0.45)
+			var hem: Vector2 = _pv(edge, low + span * 0.45)
+			_fill(PackedVector2Array([_pv(edge, high), _pv(edge.lerp(other, 0.3), high), waist, hem]), cloth)
+			_fill(PackedVector2Array([hem, waist, _pv(edge.lerp(other, 0.16), low), _pv(edge, low)]), cloth)
+	_fill(PackedVector2Array([_pv(p, high), _pv(q, high), _pv(q, high - span * 0.14), _pv(p, high - span * 0.14)]), cloth.darkened(0.06))
 
 
 ## Goods on shelves behind the store window.
@@ -1620,7 +2225,7 @@ func _draw_shop_window(p: Vector2, q: Vector2, low: float, high: float) -> void:
 			var t0: float = (float(item) + 0.15) / 6.0
 			var t1: float = (float(item) + 0.8) / 6.0
 			var tall: float = (high - low) * (0.14 + 0.08 * float((item + shelf) % 3))
-			draw_colored_polygon(PackedVector2Array([_pv(p.lerp(q, t0), z), _pv(p.lerp(q, t1), z), _pv(p.lerp(q, t1), z + tall), _pv(p.lerp(q, t0), z + tall)]),
+			_fill(PackedVector2Array([_pv(p.lerp(q, t0), z), _pv(p.lerp(q, t1), z), _pv(p.lerp(q, t1), z + tall), _pv(p.lerp(q, t0), z + tall)]),
 					_tint(Color(goods[(item + shelf * 2) % goods.size()], 0.85)))
 
 
@@ -1628,13 +2233,13 @@ func _draw_foundation(a: Vector2, b: Vector2, store: bool) -> void:
 	var color: Color = Color(0.44, 0.38, 0.35) if store else Color(0.66, 0.64, 0.60)
 	var top: float = (1.0 if store else 1.3) * FOOT
 	var normal: Vector2 = (b - a).normalized().orthogonal()
-	draw_colored_polygon(PackedVector2Array([_pv(a, 0.0), _pv(b, 0.0), _pv(b, top), _pv(a, top)]), _tint(_wall_shade(color, normal)))
+	_fill(PackedVector2Array([_pv(a, 0.0), _pv(b, 0.0), _pv(b, top), _pv(a, top)]), _tint(_wall_shade(color, normal)))
 	draw_line(_pv(a, top), _pv(b, top), _tint(color.darkened(0.3)), 1.0)
 
 
 ## The two ends of the wall the door is on.
 func _door_wall(building: Dictionary, style: Dictionary) -> Array:
-	var rect: Rect2 = _rect_of(building["footprint"])
+	var rect: Rect2 = _building_rect(building)
 	var out: Vector2 = style["out"]
 	if style["along_x"]:
 		var y: float = rect.position.y if out.y < 0.0 else rect.end.y
@@ -1746,10 +2351,10 @@ func _draw_bay(id: String, style: Dictionary, siding: Color, roof: Color, lit: b
 		var p2: Vector2 = p.lerp(q, 0.16)
 		var q2: Vector2 = p.lerp(q, 0.84)
 		var pane: PackedVector2Array = PackedVector2Array([_pv(p2, 3.0 * FOOT), _pv(q2, 3.0 * FOOT), _pv(q2, 7.2 * FOOT), _pv(p2, 7.2 * FOOT)])
-		draw_colored_polygon(pane, glass)
+		_fill(pane, glass)
 		if _scale * FOOT >= 1.6:
 			_draw_curtains(p2, q2, 3.0 * FOOT, 7.2 * FOOT, style, lit)
-		draw_polyline(_closed(pane), frame, 1.0, true)
+		_outline(pane, frame)
 		if lit:
 			draw_circle((pane[0] + pane[2]) / 2.0, 5.0 * _zoom, Color(1.0, 0.85, 0.45, 0.12))
 	var hood: PackedVector2Array = PackedVector2Array([
@@ -1809,8 +2414,8 @@ func _draw_dormer(building: Dictionary, rect: Rect2, h: float, rise: float, sidi
 			_tint(_wall_shade(siding, out)))
 	var pane: PackedVector2Array = PackedVector2Array([_on_slope(frame, u - 1.3 * FOOT, d_f, zs + 0.5 * FOOT), _on_slope(frame, u + 1.3 * FOOT, d_f, zs + 0.5 * FOOT),
 			_on_slope(frame, u + 1.3 * FOOT, d_f, zt - 0.4 * FOOT), _on_slope(frame, u - 1.3 * FOOT, d_f, zt - 0.4 * FOOT)])
-	draw_colored_polygon(pane, _window_glass(building["id"], lit) if lit else _tint(COLOR_GLASS.darkened(0.1)))
-	draw_polyline(_closed(pane), _tint(COLOR_TRIM), 1.0, true)
+	_fill(pane, _window_glass(building["id"], lit) if lit else _tint(COLOR_GLASS.darkened(0.1)))
+	_outline(pane, _tint(COLOR_TRIM))
 	_face(PackedVector2Array([_on_slope(frame, u - w, d_f, zt), _on_slope(frame, u + w, d_f, zt), _on_slope(frame, u, d_f, zt + peak)]), _tint(_wall_shade(siding, out)))
 	_face(PackedVector2Array([_on_slope(frame, u + side * (w + o), d_f - o, zt - 0.3 * FOOT), _on_slope(frame, u, d_f - o, zt + peak),
 			_on_slope(frame, u, d_p, zt + peak), _on_slope(frame, u + side * (w + o), d_e, zt - 0.3 * FOOT)]), _tint(roof.lightened(0.1)), edge)
@@ -1834,7 +2439,7 @@ func _draw_awning(building: Dictionary, style: Dictionary) -> void:
 	var low: float = 8.0 * FOOT
 	var reach: Vector2 = n * 4.2 * FOOT
 	var drop: float = 0.9 * FOOT
-	draw_colored_polygon(PackedVector2Array([_pv(a + along * u0, top), _pv(a + along * u1, top), _pv(a + along * u1, 6.8 * FOOT), _pv(a + along * u0, 6.8 * FOOT)]),
+	_fill(PackedVector2Array([_pv(a + along * u0, top), _pv(a + along * u1, top), _pv(a + along * u1, 6.8 * FOOT), _pv(a + along * u0, 6.8 * FOOT)]),
 			Color(0, 0, 0, 0.12 * (1.0 - _night)))
 	var count: int = maxi(6, int((u1 - u0) / (1.7 * FOOT)))
 	var cream: Color = Color(0.97, 0.94, 0.86)
@@ -1842,9 +2447,9 @@ func _draw_awning(building: Dictionary, style: Dictionary) -> void:
 		var wa: Vector2 = a + along * lerpf(u0, u1, float(index) / float(count))
 		var wb: Vector2 = a + along * lerpf(u0, u1, float(index + 1) / float(count))
 		var color: Color = CHERRY if index % 2 == 0 else cream
-		draw_colored_polygon(PackedVector2Array([_pv(wa, top), _pv(wb, top), _pv(wb + reach, low), _pv(wa + reach, low)]), _tint(color))
+		_fill(PackedVector2Array([_pv(wa, top), _pv(wb, top), _pv(wb + reach, low), _pv(wa + reach, low)]), _tint(color))
 		var middle: Vector2 = (wa + wb) / 2.0 + reach
-		draw_colored_polygon(PackedVector2Array([_pv(wa + reach, low), _pv(wb + reach, low), _pv(wb + reach, low - drop * 0.55),
+		_fill(PackedVector2Array([_pv(wa + reach, low), _pv(wb + reach, low), _pv(wb + reach, low - drop * 0.55),
 				_pv(middle, low - drop), _pv(wa + reach, low - drop * 0.55)]), _tint(color.darkened(0.14)))
 	var seam: Color = _tint(CHERRY.darkened(0.4))
 	draw_line(_pv(a + along * u0, top), _pv(a + along * u1, top), seam, 1.0)
@@ -1883,7 +2488,7 @@ func _draw_bench(c: Vector2, along: Vector2, n: Vector2) -> void:
 	for side: float in [-1.0, 1.0]:
 		draw_line(_pv(back + along * side * half * 0.85, 0.0), _pv(back + along * side * half * 0.85, 3.1 * FOOT), iron, 1.0)
 	for z: float in [2.2 * FOOT, 2.8 * FOOT]:
-		draw_colored_polygon(PackedVector2Array([_pv(back - along * half, z - 0.22 * FOOT), _pv(back + along * half, z - 0.22 * FOOT),
+		_fill(PackedVector2Array([_pv(back - along * half, z - 0.22 * FOOT), _pv(back + along * half, z - 0.22 * FOOT),
 				_pv(back + along * half, z + 0.15 * FOOT), _pv(back - along * half, z + 0.15 * FOOT)]), _tint(wood.darkened(0.1)))
 	_draw_prism([c - along * half - n * depth, c + along * half - n * depth, c + along * half + n * depth, c - along * half + n * depth],
 			1.35 * FOOT, 1.6 * FOOT, wood, wood.lightened(0.12))
@@ -1916,20 +2521,27 @@ func _draw_pole(pole: Dictionary) -> void:
 
 ## One piece of the wires between two poles: three power lines on the
 ## crossarm and a telephone line lower down, each sagging between the poles.
-func _draw_wire(wire: Dictionary) -> void:
-	var a: Vector2 = wire["a"]
-	var b: Vector2 = wire["b"]
-	var across: Vector2 = wire["across"]
-	var t0: float = wire["t0"]
-	var t1: float = wire["t1"]
+func _draw_wire(index: int) -> void:
+	if _wire_lines[index] == null:
+		var wire: Dictionary = _wires[index]
+		var a: Vector2 = wire["a"]
+		var b: Vector2 = wire["b"]
+		var across: Vector2 = wire["across"]
+		var t0: float = wire["t0"]
+		var t1: float = wire["t1"]
+		var runs: Array[PackedVector2Array] = []
+		for spec: Array in [[-2.7, 24.0, 1.8], [0.0, 24.0, 1.8], [2.7, 24.0, 1.8], [0.0, 19.6, 2.4]]:
+			var off: Vector2 = across * float(spec[0]) * FOOT
+			var points: PackedVector2Array = PackedVector2Array()
+			for step: int in 4:
+				var t: float = lerpf(t0, t1, float(step) / 3.0)
+				points.append(_pv(a.lerp(b, t) + off, (float(spec[1]) - float(spec[2]) * sin(t * PI)) * FOOT))
+			runs.append(points)
+		_wire_lines[index] = runs
 	var color: Color = Color(_tint(COLOR_WIRE), 0.5)
-	for spec: Array in [[-2.7, 24.0, 1.8], [0.0, 24.0, 1.8], [2.7, 24.0, 1.8], [0.0, 19.6, 2.4]]:
-		var off: Vector2 = across * float(spec[0]) * FOOT
-		var points: PackedVector2Array = PackedVector2Array()
-		for step: int in 4:
-			var t: float = lerpf(t0, t1, float(step) / 3.0)
-			points.append(_pv(a.lerp(b, t) + off, (float(spec[1]) - float(spec[2]) * sin(t * PI)) * FOOT))
-		draw_polyline(points, color, 1.0, true)
+	for points: PackedVector2Array in _wire_lines[index]:
+		for step: int in points.size() - 1:
+			draw_line(points[step], points[step + 1], color, 1.0, true)
 
 
 func _draw_hydrant(hydrant: Dictionary) -> void:
@@ -1957,12 +2569,12 @@ func _draw_drain(drain: Dictionary) -> void:
 	var w: Vector2 = inward * 0.7 * FOOT
 	var grate: PackedVector2Array = PackedVector2Array([_iso(c.x - l.x - w.x, c.y - l.y - w.y), _iso(c.x + l.x - w.x, c.y + l.y - w.y),
 			_iso(c.x + l.x + w.x, c.y + l.y + w.y), _iso(c.x - l.x + w.x, c.y - l.y + w.y)])
-	draw_colored_polygon(grate, _tint(Color(0.21, 0.21, 0.22)))
+	_fill(grate, _tint(Color(0.21, 0.21, 0.22)))
 	var bar: Color = _tint(Color(0.48, 0.48, 0.49))
 	for index: int in 5:
 		var u: Vector2 = along * (float(index) - 2.0) * 0.55 * FOOT
 		draw_line(_iso(c.x + u.x - w.x, c.y + u.y - w.y), _iso(c.x + u.x + w.x, c.y + u.y + w.y), bar, 1.0)
-	draw_polyline(_closed(grate), bar, 1.0, true)
+	_outline(grate, bar)
 
 
 func _draw_can(can: Dictionary) -> void:
@@ -2044,7 +2656,7 @@ func _draw_tulips(row: Dictionary) -> void:
 		var top: Vector2 = _pv(p, 1.3 * FOOT)
 		draw_line(base, top, stem, maxf(1.0, r * 0.35))
 		draw_line(base, base + Vector2(-r * 0.9, -r * 1.3), stem, maxf(1.0, r * 0.45))
-		draw_colored_polygon(PackedVector2Array([top + Vector2(-r, -r * 0.9), top + Vector2(-r * 0.35, -r * 0.4), top + Vector2(0, -r * 1.1),
+		_fill(PackedVector2Array([top + Vector2(-r, -r * 0.9), top + Vector2(-r * 0.35, -r * 0.4), top + Vector2(0, -r * 1.1),
 				top + Vector2(r * 0.35, -r * 0.4), top + Vector2(r, -r * 0.9), top + Vector2(r * 0.8, r * 0.3), top + Vector2(0, r * 0.6),
 				top + Vector2(-r * 0.8, r * 0.3)]), _tint(colors[index]))
 
@@ -2053,18 +2665,19 @@ func _draw_tulips(row: Dictionary) -> void:
 
 func _draw_lawn_texture() -> void:
 	var stripe: Color = _tint(Color(0.86, 0.95, 0.66, 0.08))
-	for band: Array in _stripes:
-		var p: Vector2 = band[0]
-		var q: Vector2 = band[1]
-		draw_colored_polygon(PackedVector2Array([_iso(p.x, p.y), _iso(q.x, p.y), _iso(q.x, q.y), _iso(p.x, q.y)]), stripe)
+	if _stripe_shapes.is_empty():
+		for band: Array in _stripes:
+			var p: Vector2 = band[0]
+			var q: Vector2 = band[1]
+			_stripe_shapes.append(PackedVector2Array([_iso(p.x, p.y), _iso(q.x, p.y), _iso(q.x, q.y), _iso(p.x, q.y)]))
+	for shape: PackedVector2Array in _stripe_shapes:
+		_fill(shape, stripe)
 	for patch: Dictionary in _patches:
 		var at: Vector2 = _iso(patch["x"], patch["y"])
 		var radius: float = float(patch["r"]) * _scale * 1.4
 		if at.x < -radius or at.x > VIEW_SIZE.x + radius or at.y < -radius or at.y > VIEW_SIZE.y + radius:
 			continue
-		var color: Color = _tint(Color(patch["color"], 0.05))
-		for ring: int in 3:
-			_ellipse(at, radius * (1.0 - 0.3 * float(ring)), 0.5, color)
+		draw_texture_rect(_blotch, Rect2(at.x - radius, at.y - radius * 0.5, radius * 2.0, radius), false, _tint(Color(patch["color"], 1.0)))
 
 
 ## Lamplight catching the wet-looking street at night: a few faint twinkles.
@@ -2152,7 +2765,7 @@ func _draw_tree(tree: Dictionary) -> void:
 		for layer: int in 3:
 			var base: float = size * (0.5 + 0.55 * float(layer))
 			var width: float = size * (0.85 - 0.22 * float(layer))
-			draw_colored_polygon(PackedVector2Array([at - Vector2(width, base), at - Vector2(-width, base), at - Vector2(0, base + size * 0.95)]),
+			_fill(PackedVector2Array([at - Vector2(width, base), at - Vector2(-width, base), at - Vector2(0, base + size * 0.95)]),
 				dark.lightened(0.08 * float(layer)))
 		return
 	var centre: Vector2 = at - Vector2(0, size * 1.45)
@@ -2164,11 +2777,14 @@ func _draw_tree(tree: Dictionary) -> void:
 		draw_circle(centre - Vector2(size * 0.35, size * 0.05), size * 0.72, _tint(bloom.darkened(0.10)))
 		draw_circle(centre + Vector2(size * 0.32, -size * 0.18), size * 0.68, _tint(bloom))
 		draw_circle(centre - Vector2(size * 0.08, size * 0.42), size * 0.55, _tint(bloom.lightened(0.10)))
+		var light_petal: Color = _tint(bloom.lightened(0.35))
+		var dark_petal: Color = _tint(bloom.darkened(0.3))
+		var fallen: Color = _tint(Color(bloom, 0.8))
 		for speck: Vector2 in tree["specks"]:
-			draw_circle(centre + speck * size * 0.8, maxf(0.8, size * 0.07), _tint(bloom.lightened(0.35) if speck.y < 0.0 else bloom.darkened(0.3)))
+			_dot(centre + speck * size * 0.8, maxf(0.8, size * 0.07), light_petal if speck.y < 0.0 else dark_petal)
 		# A few petals fallen on the grass beneath.
 		for speck: Vector2 in tree["specks"]:
-			draw_circle(at + Vector2(speck.x * size * 1.1, speck.y * size * 0.35 + size * 0.1), maxf(0.7, size * 0.04), _tint(Color(bloom, 0.8)))
+			_dot(at + Vector2(speck.x * size * 1.1, speck.y * size * 0.35 + size * 0.1), maxf(0.7, size * 0.04), fallen)
 		return
 	draw_circle(centre + Vector2(size * 0.15, size * 0.12), size, _tint(leaf.darkened(0.25)))
 	draw_circle(centre - Vector2(size * 0.35, size * 0.05), size * 0.72, _tint(leaf.darkened(0.08)))
@@ -2226,20 +2842,27 @@ func _draw_car(car: Dictionary) -> void:
 		draw_circle(_p3(wx, wy, 1.0 * FOOT), maxf(1.5, 1.1 * FOOT * _scale), _tint(Color(0.12, 0.12, 0.12)))
 
 
-func _draw_fence(fence: Array) -> void:
+func _draw_fence(index: int) -> void:
+	var fence: Array = _fences[index]
 	var a: Vector2 = fence[0]
 	var b: Vector2 = fence[1]
 	var height: float = 3.0 * FOOT
-	var color: Color = _tint(COLOR_FENCE)
-	var low: Color = _tint(COLOR_FENCE.darkened(0.25))
-	draw_line(_p3(a.x, a.y, height * 0.7), _p3(b.x, b.y, height * 0.7), low, 1.0)
-	var step: float = 2.0 * FOOT if _zoom >= 1.4 else 4.0 * FOOT
-	var length: float = a.distance_to(b)
-	var at: float = 0.0
-	while at <= length:
-		var p: Vector2 = a.lerp(b, at / length)
-		draw_line(_p3(p.x, p.y, 0.0), _p3(p.x, p.y, height), color, 1.0)
-		at += step
+	if _fence_lines[index] == null:
+		# The pickets, as one batch of lines.
+		var pickets: PackedVector2Array = PackedVector2Array()
+		var step: float = 2.0 * FOOT if _zoom >= 1.4 else 4.0 * FOOT
+		var length: float = a.distance_to(b)
+		var at: float = 0.0
+		while at <= length:
+			var p: Vector2 = a.lerp(b, at / length)
+			pickets.append(_p3(p.x, p.y, 0.0))
+			pickets.append(_p3(p.x, p.y, height))
+			at += step
+		_fence_lines[index] = pickets
+	draw_line(_p3(a.x, a.y, height * 0.7), _p3(b.x, b.y, height * 0.7), _tint(COLOR_FENCE.darkened(0.25)), 1.0)
+	var lines: PackedVector2Array = _fence_lines[index]
+	if lines.size() >= 2:
+		draw_multiline(lines, _tint(COLOR_FENCE), 1.0)
 
 
 func _draw_flowers(bed: Dictionary) -> void:
@@ -2250,8 +2873,8 @@ func _draw_flowers(bed: Dictionary) -> void:
 	var leaf: Color = _tint(Color(0.26, 0.44, 0.22))
 	for dot: Array in bed["dots"]:
 		var at: Vector2 = _iso(x + float(dot[0]), y + float(dot[1]))
-		draw_circle(at, radius * 1.2, leaf)
-		draw_circle(at - lift, radius, _tint(dot[2]))
+		_dot(at, radius * 1.2, leaf)
+		_dot(at - lift, radius, _tint(dot[2]))
 
 
 func _draw_mailbox(mailbox: Dictionary) -> void:
@@ -2367,6 +2990,172 @@ func _draw_birds() -> void:
 		draw_polyline(PackedVector2Array([at + Vector2(-5, -2 - flap), at, at + Vector2(5, -2 - flap)]), ink, 1.3, true)
 
 
+# --- A cat and a dog ---------------------------------------------------------------
+
+## Where the cat and the dog are this frame. They keep wall-clock time, not
+## the game's, so they go about their business while the game is paused;
+## after dark both are curled up asleep.
+func _place_animals() -> void:
+	var seconds: float = float(Time.get_ticks_msec()) / 1000.0
+	var asleep: bool = _night > 0.6
+	_cat_now = {}
+	_dog_now = {}
+	if not _cat.is_empty():
+		var route: Array = _cat["route"]
+		var face: float = _cat["face"]
+		# A minute or so: on the step, over to the fence and along it, a
+		# while up there, and back again.
+		var t: float = fmod(seconds + float(_cat["offset"]), 64.0)
+		var along: float = 0.0   # 0 on the step, 1 on the fence
+		var pose: String = "sit"
+		if asleep:
+			pose = "sleep"
+		elif t >= 22.0 and t < 31.0:
+			along = (t - 22.0) / 9.0
+			pose = "walk"
+		elif t >= 31.0 and t < 52.0:
+			along = 1.0
+		elif t >= 52.0 and t < 61.0:
+			along = 1.0 - (t - 52.0) / 9.0
+			pose = "walk"
+		var total: float = 0.0
+		for index: int in route.size() - 1:
+			total += (route[index] as Vector3).distance_to(route[index + 1])
+		var remaining: float = total * along
+		var at: Vector3 = route[0]
+		for index: int in route.size() - 1:
+			var from: Vector3 = route[index]
+			var to: Vector3 = route[index + 1]
+			var length: float = from.distance_to(to)
+			if remaining <= length:
+				at = from.lerp(to, remaining / maxf(length, 0.001))
+				if pose == "walk" and absf(to.x + to.y - from.x - from.y) > 1.0:
+					face = signf(to.x + to.y - from.x - from.y) * (1.0 if t < 40.0 else -1.0)
+				break
+			remaining -= length
+			at = to
+		if along >= 1.0:
+			var last: Vector3 = route[route.size() - 1]
+			var previous: Vector3 = route[route.size() - 2]
+			face = -signf(last.x + last.y - previous.x - previous.y)
+		_cat_now = {"at": at, "pose": pose, "face": face if face != 0.0 else 1.0, "step": seconds * 9.0}
+	if not _dog.is_empty():
+		var a: Vector2 = _dog["a"]
+		var b: Vector2 = _dog["b"]
+		var t: float = fmod(seconds + float(_dog["offset"]), 22.0)
+		var along: float = 0.0
+		var pose: String = "sit"
+		var face: float = signf(b.x + b.y - a.x - a.y)
+		if asleep:
+			pose = "sleep"
+		elif t < 5.0:
+			along = t / 5.0
+			pose = "trot"
+		elif t < 9.0:
+			along = 1.0
+			pose = "stand"
+		elif t < 14.0:
+			along = 1.0 - (t - 9.0) / 5.0
+			pose = "trot"
+			face = -face
+		var spot: Vector2 = a.lerp(b, along)
+		_dog_now = {"at": Vector3(spot.x, spot.y, 0.0), "pose": pose, "face": face if face != 0.0 else 1.0, "step": seconds * 11.0}
+
+
+func _animal_light(color: Color) -> Color:
+	return _lit_by(Color.WHITE.lerp(_ambient, 0.7), color)
+
+
+func _draw_zzz(at: Vector2, k: float) -> void:
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	for index: int in 2:
+		var t: float = fmod(now * 0.45 + 0.5 * float(index), 1.0)
+		draw_string(_font, at + Vector2(3.0 * k + 5.0 * t * k, -4.0 * k - 9.0 * t * k), "z", HORIZONTAL_ALIGNMENT_LEFT, -1,
+				clampi(int((6.0 + 3.0 * t) * k), 7, 16), Color(0.95, 0.95, 1.0, 0.75 * sin(t * PI)))
+
+
+func _draw_cat() -> void:
+	var at: Vector3 = _cat_now["at"]
+	var feet: Vector2 = _p3(at.x, at.y, at.z)
+	var k: float = clampf(1.1 * sqrt(_zoom), 0.9, 1.9)
+	var f: float = _cat_now["face"]
+	var coat: Color = _animal_light(_cat["coat"])
+	var dark: Color = _animal_light((_cat["coat"] as Color).darkened(0.35))
+	var pose: String = _cat_now["pose"]
+	if at.z < 1.0:
+		_ellipse(feet, 3.6 * k, 0.4, Color(0.10, 0.12, 0.08, 0.16 * (1.0 - _night)))
+	var head: Vector2
+	if pose == "sleep":
+		_ellipse(feet - Vector2(0, 1.5 * k), 3.3 * k, 0.6, coat)
+		head = feet + Vector2(2.0 * f * k, -1.7 * k)
+		draw_arc(feet - Vector2(0, 1.2 * k), 3.2 * k, 0.15 * PI, 0.85 * PI, 8, dark, maxf(1.0, 0.9 * k))
+		_draw_zzz(feet, k)
+	elif pose == "walk":
+		var swing: float = sin(float(_cat_now["step"])) * 1.3 * k
+		for leg: Array in [[-2.4, 1.0], [-1.6, -1.0], [1.8, -1.0], [2.6, 1.0]]:
+			draw_line(feet + Vector2(float(leg[0]) * f * k, -2.6 * k), feet + Vector2(float(leg[0]) * f * k + swing * float(leg[1]), 0), dark, maxf(1.0, 0.8 * k))
+		draw_set_transform(feet - Vector2(0, 3.3 * k), 0.0, Vector2(1.0, 0.48))
+		draw_circle(Vector2.ZERO, 3.5 * k, coat)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		head = feet + Vector2(3.9 * f * k, -4.6 * k)
+		var sway: float = sin(float(_cat_now["step"]) * 0.35) * 1.2 * k
+		draw_polyline(PackedVector2Array([feet + Vector2(-3.2 * f * k, -3.6 * k), feet + Vector2(-4.6 * f * k, -5.6 * k),
+				feet + Vector2(-4.4 * f * k + sway, -8.2 * k)]), coat, maxf(1.0, 0.9 * k), true)
+	else:
+		var flick: float = sin(float(Time.get_ticks_msec()) / 500.0) * 0.8 * k
+		draw_polyline(PackedVector2Array([feet + Vector2(-1.6 * f * k, -0.8 * k), feet + Vector2(-3.6 * f * k, -0.4 * k),
+				feet + Vector2(-4.4 * f * k, -1.8 * k + flick)]), dark, maxf(1.0, 0.9 * k), true)
+		draw_set_transform(feet - Vector2(0.4 * f * k, 2.6 * k), 0.0, Vector2(0.78, 1.0))
+		draw_circle(Vector2.ZERO, 2.8 * k, coat)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		draw_circle(feet + Vector2(0.9 * f * k, -1.5 * k), 1.5 * k, _animal_light((_cat["coat"] as Color).lightened(0.25)))
+		head = feet + Vector2(0.9 * f * k, -5.9 * k)
+	draw_circle(head, 1.9 * k, coat)
+	for ear: float in [-1.0, 1.0]:
+		_fill(PackedVector2Array([head + Vector2((ear * 1.7 - 0.5) * k, -0.9 * k), head + Vector2((ear * 1.7 + 0.5) * k, -1.3 * k),
+				head + Vector2(ear * 1.5 * k, -3.0 * k)]), coat if pose == "sleep" else dark)
+
+
+func _draw_dog() -> void:
+	var at: Vector3 = _dog_now["at"]
+	var feet: Vector2 = _p3(at.x, at.y, 0.0)
+	var k: float = clampf(1.3 * sqrt(_zoom), 1.1, 2.3)
+	var f: float = _dog_now["face"]
+	var coat: Color = _animal_light(_dog["coat"])
+	var ear: Color = _animal_light(_dog["ear"])
+	var pose: String = _dog_now["pose"]
+	var now: float = float(Time.get_ticks_msec())
+	_ellipse(feet, 5.0 * k, 0.4, Color(0.10, 0.12, 0.08, 0.16 * (1.0 - _night)))
+	if pose == "sleep":
+		_ellipse(feet - Vector2(0, 1.8 * k), 4.6 * k, 0.5, coat)
+		draw_circle(feet + Vector2(3.6 * f * k, -1.5 * k), 2.0 * k, coat)
+		_fill(PackedVector2Array([feet + Vector2(2.6 * f * k, -3.0 * k), feet + Vector2(4.2 * f * k, -2.6 * k), feet + Vector2(2.8 * f * k, -0.6 * k)]), ear)
+		draw_arc(feet - Vector2(0, 1.4 * k), 4.4 * k, 0.2 * PI, 0.8 * PI, 8, ear, maxf(1.0, 0.9 * k))
+		_draw_zzz(feet + Vector2(2.0 * f * k, 0), k)
+		return
+	var trot: bool = pose == "trot"
+	var sitting: bool = pose == "sit"
+	var stride: float = sin(float(_dog_now["step"])) * 1.9 * k if trot else 0.0
+	var bounce: float = absf(sin(float(_dog_now["step"]))) * 0.7 * k if trot else 0.0
+	var body: Vector2 = feet - Vector2(0, 4.6 * k + bounce)
+	var legs: Color = _animal_light((_dog["coat"] as Color).darkened(0.22))
+	var rump: float = 2.0 * k if sitting else 0.0
+	for leg: Array in [[-3.0, 1.0], [-2.1, -1.0], [2.3, -1.0], [3.2, 1.0]]:
+		var top: Vector2 = body + Vector2(float(leg[0]) * f * k, 1.2 * k + (rump if float(leg[0]) < 0.0 else 0.0))
+		draw_line(top, feet + Vector2(float(leg[0]) * f * k + stride * float(leg[1]), 0), legs, maxf(1.2, 1.1 * k))
+	# The tail wags, faster when standing about.
+	var wag: float = sin(now / (90.0 if not trot else 150.0)) * 1.8 * k
+	draw_line(body + Vector2(-3.8 * f * k, -0.4 * k + rump), body + Vector2(-5.6 * f * k + wag * 0.4, -3.6 * k + rump + absf(wag) * 0.3), coat, maxf(1.2, 1.1 * k))
+	draw_set_transform(body + Vector2(0, rump * 0.5), -0.35 * f if sitting else 0.0, Vector2(1.0, 0.5))
+	draw_circle(Vector2.ZERO, 4.2 * k, coat)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var head: Vector2 = body + Vector2(4.6 * f * k, -2.6 * k)
+	draw_circle(head, 2.2 * k, coat)
+	draw_circle(head + Vector2(2.1 * f * k, 0.7 * k), 1.2 * k, coat)
+	draw_circle(head + Vector2(3.1 * f * k, 0.5 * k), maxf(0.7, 0.5 * k), _animal_light(Color(0.14, 0.12, 0.12)))
+	_fill(PackedVector2Array([head + Vector2(-1.9 * f * k, -1.6 * k), head + Vector2(0.2 * f * k, -1.9 * k), head + Vector2(-1.5 * f * k, 1.9 * k)]), ear)
+
+
 # --- People ------------------------------------------------------------------
 
 ## Where to draw a person this frame: along the path walked in the latest minute.
@@ -2468,10 +3257,30 @@ func _draw_person(person: Dictionary, hovered: bool) -> void:
 	var torso: PackedVector2Array = PackedVector2Array([
 		hip + Vector2(-3.4 * k, 0.5), hip + Vector2(3.4 * k, 0.5),
 		shoulders + Vector2(3.0 * k, 0), shoulders + Vector2(-3.0 * k, 0)])
-	draw_colored_polygon(torso, _lit_by(person_light, body))
-	draw_polyline(_closed(torso), _lit_by(person_light, body.darkened(0.45)), 1.0, true)
-	draw_line(shoulders + Vector2(-3.0 * k, 0.5), hip + Vector2(-3.8 * k, -1.0 - swing * 0.4), _lit_by(person_light, body.darkened(0.15)), 1.6 * k)
-	draw_line(shoulders + Vector2(3.0 * k, 0.5), hip + Vector2(3.8 * k, -1.0 + swing * 0.4), _lit_by(person_light, body.darkened(0.15)), 1.6 * k)
+	_fill(torso, _lit_by(person_light, body))
+	_outline(torso, _lit_by(person_light, body.darkened(0.45)))
+	var sleeve: Color = _lit_by(person_light, body.darkened(0.15))
+	# A short wave hello when a conversation starts: the arm on the side of
+	# the other person goes up and wags.
+	var wave_side: float = 0.0
+	if _waves.has(id):
+		var wave_age: int = int(now) - int(_waves[id])
+		if wave_age >= WAVE_MS:
+			_waves.erase(id)
+		else:
+			var other_id: String = person["action"].get("other_id", "") if talking else ""
+			wave_side = -1.0 if _screen_positions.has(other_id) and (_screen_positions[other_id] as Vector2).x < feet.x else 1.0
+			var raise: float = clampf(float(wave_age) / 140.0, 0.0, 1.0) * clampf(float(WAVE_MS - wave_age) / 200.0, 0.0, 1.0)
+			var wag: float = sin(float(wave_age) / 70.0) * 1.6 * k
+			var shoulder: Vector2 = shoulders + Vector2(3.0 * k * wave_side, 0.5)
+			var rest: Vector2 = hip + Vector2(3.8 * k * wave_side, -1.0)
+			var hand: Vector2 = rest.lerp(shoulders + Vector2(6.2 * k * wave_side + wag, -6.5 * k), raise)
+			draw_line(shoulder, hand, sleeve, 1.6 * k)
+			draw_circle(hand, 1.3 * k, _lit_by(person_light, COLOR_SKIN))
+	if wave_side >= 0.0:
+		draw_line(shoulders + Vector2(-3.0 * k, 0.5), hip + Vector2(-3.8 * k, -1.0 - swing * 0.4), sleeve, 1.6 * k)
+	if wave_side <= 0.0:
+		draw_line(shoulders + Vector2(3.0 * k, 0.5), hip + Vector2(3.8 * k, -1.0 + swing * 0.4), sleeve, 1.6 * k)
 	var head: Vector2 = shoulders - Vector2(0, 3.4 * k)
 	draw_circle(head, 3.2 * k, _lit_by(person_light, COLOR_SKIN))
 	draw_arc(head, 3.2 * k, PI * 1.05, PI * 1.95, 10, _lit_by(person_light, _pick(HAIR, id + "hair")), 2.2 * k)
@@ -2479,7 +3288,7 @@ func _draw_person(person: Dictionary, hovered: bool) -> void:
 	if id == selected_id:
 		var bounce: float = sin(now / 220.0) * 2.0
 		var tip: Vector2 = head - Vector2(0, 9.0 * k + bounce)
-		draw_colored_polygon(PackedVector2Array([tip, tip + Vector2(-4.5, -6), tip + Vector2(4.5, -6)]), MUSTARD)
+		_fill(PackedVector2Array([tip, tip + Vector2(-4.5, -6), tip + Vector2(4.5, -6)]), MUSTARD)
 		draw_polyline(PackedVector2Array([tip, tip + Vector2(-4.5, -6), tip + Vector2(4.5, -6), tip]), INK, 1.0, true)
 
 
@@ -2536,7 +3345,7 @@ func _draw_bubble(anchor: Vector2, text: String, age_ms: int, tail_to: Vector2 =
 	var box: StyleBoxFlat = _bubble_box_fresh if fresh else _bubble_box
 	if tail_to != Vector2.INF:
 		var base_x: float = clampf(tail_to.x, anchor.x + 8.0, anchor.x + size.x - 8.0)
-		draw_colored_polygon(PackedVector2Array([
+		_fill(PackedVector2Array([
 			Vector2(base_x - 4.0, anchor.y - 2.0), Vector2(base_x + 4.0, anchor.y - 2.0), tail_to + Vector2(0, -1)]), box.border_color)
 	# Grow from the middle of the bubble so it pops in place.
 	var middle: Vector2 = anchor + Vector2(size.x / 2.0, -size.y / 2.0)
@@ -2572,11 +3381,76 @@ func _hovered() -> Dictionary:
 	return {}
 
 
+## A small paper card about the person under the pointer: who they are, whose
+## household, what they are doing and, for a neighbor while one of the
+## player's household is selected, how the two regard each other. Read only:
+## a pair who have never met has no record, and none is made here.
+func _draw_person_card(person_id: String) -> void:
+	var person: Dictionary = simulation.state.people[person_id]
+	var household: Dictionary = simulation.state.households[person["household_id"]]
+	var players: bool = household["player_controlled"]
+	var title: String = "%s %s" % [person["given_name"], person["family_name"]]
+	var home_line: String = "%s%s" % [household["name"], "  (your household)" if players else ""]
+	var doing: String = _bubbles.get(person_id, {}).get("text", "")
+	# Each row: [text, size, color].
+	var rows: Array = [[home_line, 11, Color(0.45, 0.38, 0.32)]]
+	if doing != "":
+		rows.append([doing, 12, INK])
+	var regard: Array = []  # [text, color] pieces of the regard line
+	var viewer: Dictionary = simulation.state.people.get(selected_id, {})
+	if not players and not viewer.is_empty() and selected_id != person_id \
+			and simulation.state.households[viewer["household_id"]]["player_controlled"]:
+		if simulation.state.relationships.has(Records.relationship_key(selected_id, person_id)):
+			var mine: int = simulation.state.regard(selected_id, person_id)
+			var theirs: int = simulation.state.regard(person_id, selected_id)
+			regard = [
+				["Regard:  %s → %s " % [viewer["given_name"], person["given_name"]], INK], ["%+d" % mine, _regard_color(mine)],
+				["   %s → %s " % [person["given_name"], viewer["given_name"]], INK], ["%+d" % theirs, _regard_color(theirs)]]
+		else:
+			regard = [["%s has not met %s yet" % [viewer["given_name"], person["given_name"]], Color(0.45, 0.38, 0.32)]]
+	var width: float = _font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 30.0
+	for row: Array in rows:
+		width = maxf(width, _font.get_string_size(row[0], HORIZONTAL_ALIGNMENT_LEFT, -1, row[1]).x)
+	var regard_width: float = 0.0
+	for piece: Array in regard:
+		regard_width += _font.get_string_size(piece[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+	width = maxf(width, regard_width) + 22.0
+	var height: float = 26.0 + 8.0 + 16.0 * float(rows.size()) + (22.0 if not regard.is_empty() else 0.0) + 4.0
+	var at: Vector2 = _hover + Vector2(16, 20)
+	if at.x + width > VIEW_SIZE.x - 6.0:
+		at.x = _hover.x - 16.0 - width
+	if at.y + height > VIEW_SIZE.y - 6.0:
+		at.y = _hover.y - 12.0 - height
+	at = Vector2(maxf(at.x, 6.0), maxf(at.y, 6.0)).round()
+	draw_style_box(_card_box, Rect2(at, Vector2(width, height)))
+	draw_style_box(_card_head, Rect2(at, Vector2(width, 26)))
+	draw_circle(at + Vector2(14, 13), 5.5, PAPER)
+	draw_circle(at + Vector2(14, 13), 4.2, _pick(PLAYER_CLOTHES, person_id) if players else _pick(CLOTHES, person_id))
+	draw_string(_font, at + Vector2(25, 18), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, PAPER)
+	var y: float = at.y + 26.0 + 17.0
+	for row: Array in rows:
+		draw_string(_font, Vector2(at.x + 11.0, y), row[0], HORIZONTAL_ALIGNMENT_LEFT, -1, row[1], row[2])
+		y += 16.0
+	if not regard.is_empty():
+		draw_line(Vector2(at.x + 10.0, y - 9.0), Vector2(at.x + width - 10.0, y - 9.0), Color(MUSTARD, 0.7), 1.0)
+		y += 6.0
+		var x: float = at.x + 11.0
+		for piece: Array in regard:
+			draw_string(_font, Vector2(x, y), piece[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, piece[1])
+			x += _font.get_string_size(piece[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+
+
+func _regard_color(value: int) -> Color:
+	if value > 0:
+		return TEAL
+	return CHERRY if value < 0 else INK
+
+
 func _draw_hover_label(hovered: Dictionary) -> void:
 	var text: String = ""
 	if hovered.has("person"):
-		var person: Dictionary = simulation.state.people[hovered["person"]]
-		text = "%s %s" % [person["given_name"], person["family_name"]]
+		_draw_person_card(hovered["person"])
+		return
 	elif hovered.has("building"):
 		var building: Dictionary = area.buildings[hovered["building"]]
 		text = "%s  (right-click for details)" % building["label"]
@@ -2889,17 +3763,52 @@ func _click(point: Vector2) -> void:
 	var rects: Dictionary = _room_rects()
 	for room_id: String in rects:
 		if (rects[room_id] as Rect2).has_point(point):
+			_add_ripple(point, true)
 			room_clicked.emit(room_id)
 			return
 	if INTERIOR_RECT.has_point(point) and not rects.is_empty():
 		return
 	var person_id: String = _person_at(point)
 	if person_id != "":
+		_add_ripple(point, true)
 		person_clicked.emit(person_id)
 		return
 	var clicked: String = _building_at(point)
+	_add_ripple(point, clicked != "")
 	if clicked != "":
 		building_clicked.emit(clicked)
+
+
+## A ring that spreads from where the player clicked: mustard on something
+## that can be clicked, grey on open ground. It stays put if the view moves.
+func _add_ripple(point: Vector2, good: bool) -> void:
+	_ripples.append({"iso": _iso_of_screen(point), "since": Time.get_ticks_msec(), "good": good})
+	while _ripples.size() > 6:
+		_ripples.pop_front()
+
+
+func _draw_ripples() -> void:
+	var now: int = Time.get_ticks_msec()
+	var kept: Array = []
+	for ripple: Dictionary in _ripples:
+		var age: int = now - int(ripple["since"])
+		if age > RIPPLE_MS:
+			continue
+		kept.append(ripple)
+		var t: float = float(age) / float(RIPPLE_MS)
+		var eased: float = 1.0 - (1.0 - t) * (1.0 - t)
+		var good: bool = ripple["good"]
+		var color: Color = MUSTARD if good else Color(0.80, 0.79, 0.76)
+		var at: Vector2 = (ripple["iso"] as Vector2) * _scale + _offset
+		draw_set_transform(at, 0.0, Vector2(1.0, 0.55))
+		draw_circle(Vector2.ZERO, 3.0 + 4.0 * eased, Color(color, 0.30 * (1.0 - t)))
+		draw_arc(Vector2.ZERO, 4.0 + (20.0 if good else 14.0) * eased, 0.0, TAU, 28, Color(1, 1, 1, 0.55 * (1.0 - t)), 4.0, true)
+		draw_arc(Vector2.ZERO, 4.0 + (20.0 if good else 14.0) * eased, 0.0, TAU, 28, Color(color, 1.0 - t * t), 2.2, true)
+		if good and t > 0.25:
+			var late: float = (t - 0.25) / 0.75
+			draw_arc(Vector2.ZERO, 3.0 + 13.0 * late, 0.0, TAU, 24, Color(color, 0.6 * (1.0 - late)), 1.5, true)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_ripples = kept
 
 
 ## The building drawn at a point on the screen ("" if none). The frontmost
@@ -2909,14 +3818,14 @@ func _building_at(point: Vector2) -> String:
 		return ""
 	var found: String = ""
 	var found_depth: float = -INF
-	for building_id: String in area.sorted_building_ids():
+	for building_id: String in _building_ids:
 		var shapes: Array = _building_shapes.get(building_id, [])
 		if shapes.is_empty():
 			var building: Dictionary = area.buildings[building_id]
 			shapes = [_polygon(building["footprint"]), _polygon(building["footprint"], (_wall_height(building) + _roof_rise(building)) * _scale)]
 		for shape: PackedVector2Array in shapes:
 			if Geometry2D.is_point_in_polygon(point, shape):
-				var rect: Rect2 = _rect_of(area.buildings[building_id]["footprint"])
+				var rect: Rect2 = _building_rect(area.buildings[building_id])
 				var depth: float = _iso(rect.get_center().x, rect.get_center().y).y
 				if depth > found_depth:
 					found_depth = depth

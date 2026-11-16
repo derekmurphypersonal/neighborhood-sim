@@ -355,6 +355,16 @@ static func clock_time(minute: int) -> String:
 	return "%d:%02d" % [minute / 60, minute % 60]
 
 
+## "4:00 pm"
+static func twelve_hour(minute_of_day: int) -> String:
+	@warning_ignore("integer_division")
+	var hour: int = minute_of_day / 60
+	var shown: int = hour % 12
+	if shown == 0:
+		shown = 12
+	return "%d:%02d %s" % [shown, minute_of_day % 60, "am" if hour < 12 else "pm"]
+
+
 ## What is known about a building, as text. The parts come from
 ## sim/reports/building_info.gd and are kept apart here too: documented
 ## exterior first, then the fictional interior, then the fictional scenario.

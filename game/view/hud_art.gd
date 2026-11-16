@@ -259,3 +259,16 @@ static func regard_meter(c: CanvasItem, rect: Rect2, mine: int, theirs: int, met
 				c.draw_rect(Rect2(middle - length, y, length, row_h), color)
 			index += 1
 	c.draw_line(Vector2(middle, rect.position.y - 1.0), Vector2(middle, rect.end.y + 1.0), INK_SOFT, 1.0)
+
+
+## A lit light bulb for the tip bubble, centred on center; r is the glass's radius.
+static func bulb(c: CanvasItem, center: Vector2, r: float) -> void:
+	for ray: int in 7:
+		var direction: Vector2 = Vector2.UP.rotated((float(ray) - 3.0) * 0.52)
+		c.draw_line(center + direction * (r + 2.0), center + direction * (r + 4.5), Color(MUSTARD, 0.8), 1.5, true)
+	c.draw_circle(center, r, MUSTARD)
+	c.draw_arc(center, r, 0.0, TAU, 24, MUSTARD.darkened(0.35), 1.0, true)
+	c.draw_arc(center, r * 0.55, PI * 1.1, PI * 1.6, 6, Color(1, 1, 1, 0.8), 1.5, true)
+	var neck: Rect2 = Rect2(center.x - r * 0.45, center.y + r * 0.8, r * 0.9, r * 0.75)
+	c.draw_rect(neck, INK_SOFT)
+	c.draw_line(Vector2(neck.position.x, neck.position.y + neck.size.y * 0.5), Vector2(neck.end.x, neck.position.y + neck.size.y * 0.5), PAPER, 1.0)

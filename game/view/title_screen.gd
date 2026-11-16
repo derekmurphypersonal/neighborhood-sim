@@ -30,6 +30,13 @@ const ROOFS: Array[Color] = [Color("#3B3550"), Color("#4A3A44"), Color("#323E4C"
 const LIT: Color = Color(1.0, 0.82, 0.48)
 const STAR_COUNT: int = 70
 const FIREFLY_COUNT: int = 14
+const BUILD_LINE: String = "M1-P preview build"
+const INTRO_TITLE_SECONDS: float = 1.5
+const INTRO_PART_SECONDS: float = 0.7
+## How far each layer moves with the slow sway, as a share of the houses'
+## movement: distant things less, near things more.
+const FAR_PARALLAX: float = 0.35
+const CLOUD_PARALLAX: float = 0.2
 ## Each house: x of its left wall, width, wall height, and whether it has two
 ## storeys (presentation only; the shapes are invented).
 const HOUSES: Array[Vector4] = [
@@ -45,6 +52,7 @@ var _continue_note: Label
 var _message: Label
 var _column: VBoxContainer
 var _buttons: Array[Button] = []
+var _intro: Tween
 
 
 func _ready() -> void:
@@ -79,16 +87,21 @@ func show_note(text: String) -> void:
 	_message.visible = text != ""
 
 
-## Fades the title and the buttons in one after another.
+## Fades the title in gently, then the buttons one after another.
 func play_intro() -> void:
-	var tween: Tween = create_tween().set_parallel(true)
+	if _intro != null:
+		_intro.kill()
+	_intro = create_tween().set_parallel(true)
 	var parts: Array[Control] = []
 	for child: Node in _column.get_children():
 		parts.append(child as Control)
 	for index: int in parts.size():
 		var part: Control = parts[index]
 		part.modulate.a = 0.0
-		tween.tween_property(part, "modulate:a", 1.0, 0.6).set_delay(0.15 + index * 0.07)
+		# The title words (the first four parts) come up slowly; the rest follow.
+		var seconds: float = INTRO_TITLE_SECONDS if index < 4 else INTRO_PART_SECONDS
+		_intro.tween_property(part, "modulate:a", 1.0, seconds).set_delay(0.2 + index * 0.09) \
+				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 
 func button_count() -> int:
@@ -212,16 +225,15 @@ func _build_ui() -> void:
 	note.add_child(note_text)
 
 	var build: Label = Label.new()
-	build.text = "Prototype  ·  F11 full screen"
+	build.text = "%s  ·  F11 full screen" % BUILD_LINE
 	build.add_theme_font_size_override("font_size", 12)
-	build.add_theme_color_override("font_color", Color(PAPER, 0.55))
+	build.add_theme_color_override("font_color", Color(PAPER, 0.7))
 	build.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	build.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Placed in the fixed 1280x720 layout, like everything else on this screen.
+	build.position = Vector2(VIEW_SIZE.x - 364, VIEW_SIZE.y - 46)
+	build.size = Vector2(340, 20)
 	add_child(build)
-	build.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	build.offset_left = -340
-	build.offset_right = -24
-	build.offset_top = -40
-	build.offset_bottom = -20
 
 
 func _menu_button(text: String, on_press: Callable) -> Button:
@@ -258,10 +270,11 @@ func _draw() -> void:
 	_draw_sky()
 	_draw_stars()
 	_draw_moon(Vector2(1060, 118))
-	_draw_clouds()
-	_draw_far_trees()
-	# A very slow sway of the whole street, like a camera breathing.
-	var drift: float = sin(_time * 0.07) * 10.0
+	# A very slow sway of the whole street, like a camera breathing. Nearer
+	# layers move further than distant ones.
+	var drift: float = sin(_time * 0.07) * 10.0 + sin(_time * 0.031 + 1.3) * 4.0
+	_draw_clouds(drift * CLOUD_PARALLAX)
+	_draw_far_trees(drift * FAR_PARALLAX)
 	_draw_ground(drift)
 	for index: int in HOUSES.size():
 		_draw_house(HOUSES[index], index, drift)
@@ -291,7 +304,8 @@ func _draw_sky() -> void:
 func _draw_stars() -> void:
 	for star: Vector4 in _stars:
 		var depth: float = clampf(1.0 - star.y / (HORIZON_Y * 0.55), 0.0, 1.0)
-		var twinkle: float = 0.55 + 0.45 * sin(_time * (0.8 + star.z) + star.w)
+		# A slow twinkle, each star at its own pace (a cycle of 8 to 20 seconds).
+		var twinkle: float = 0.6 + 0.4 * sin(_time * (0.3 + star.z * 0.25) + star.w)
 		var color: Color = Color(1.0, 0.97, 0.88, twinkle * (0.25 + 0.75 * depth))
 		draw_circle(Vector2(star.x, star.y), star.z * 0.8, color)
 		if star.z > 1.5:
@@ -309,21 +323,23 @@ func _draw_moon(at: Vector2) -> void:
 	draw_arc(at, 19.0, PI * 0.6, PI * 1.4, 16, Color(0.6, 0.6, 0.75, 0.25), 4.0)
 
 
-func _draw_clouds() -> void:
+func _draw_clouds(shift: float) -> void:
 	for index: int in 4:
 		var width: float = VIEW_SIZE.x + 400.0
-		var x: float = fposmod(index * 377.0 + _time * (5.0 + index * 1.5), width) - 200.0
+		var x: float = fposmod(index * 377.0 + _time * (5.0 + index * 1.5) + shift * (1.0 + index * 0.5), width) - 200.0
 		var y: float = 300.0 + index * 46.0
 		var tint: Color = Color(0.98, 0.70, 0.62, 0.10 + 0.03 * index)
 		for blob: int in 4:
 			draw_colored_polygon(_ellipse(Vector2(x + blob * 46.0, y + sin(blob * 1.7) * 5.0), Vector2(70.0 - blob * 6.0, 9.0 + (blob % 2) * 3.0)), tint)
 
 
-func _draw_far_trees() -> void:
+func _draw_far_trees(shift: float) -> void:
 	var points: PackedVector2Array = PackedVector2Array([Vector2(0, HORIZON_Y + 40)])
 	for step: int in 65:
 		var x: float = step * 20.0
-		var bump: float = 16.0 * sin(x * 0.021) + 11.0 * sin(x * 0.053 + 1.0) + 7.0 * sin(x * 0.11)
+		# The skyline is read a little to one side as the view sways.
+		var along: float = x - shift
+		var bump: float = 16.0 * sin(along * 0.021) + 11.0 * sin(along * 0.053 + 1.0) + 7.0 * sin(along * 0.11)
 		points.append(Vector2(x, HORIZON_Y - 22.0 - bump))
 	points.append(Vector2(VIEW_SIZE.x, HORIZON_Y + 40))
 	draw_colored_polygon(points, Color("#2E3A52"))
@@ -366,10 +382,9 @@ func _draw_house(house: Vector4, index: int, drift: float) -> void:
 		for column: int in 2:
 			var x: float = left + width * (0.18 if column == 0 else 0.62)
 			var key: int = index * 7 + row * 3 + column
-			var lit: bool = sin(_time * 0.05 + key * 1.9) > -0.35
-			_draw_window(Rect2(x, y, width * 0.2, 26), lit)
+			_draw_window(Rect2(x, y, width * 0.2, 26), _window_light(key))
 	# Gable window.
-	_draw_window(Rect2(peak.x - 8, peak.y + width * 0.2, 16, 14), index % 3 == 0)
+	_draw_window(Rect2(peak.x - 8, peak.y + width * 0.2, 16, 14), 1.0 if index % 3 == 0 else 0.0)
 	# Door and step.
 	var door: Rect2 = Rect2(left + width * 0.44, base - 34, width * 0.13, 34)
 	draw_rect(door, Color("#3F2F33"))
@@ -382,13 +397,21 @@ func _draw_house(house: Vector4, index: int, drift: float) -> void:
 		draw_circle(bulb, 2.5, LIT)
 
 
-func _draw_window(r: Rect2, lit: bool) -> void:
-	if lit:
+## How brightly a window is lit, from 0 (dark) to 1. Each window keeps its own
+## slow rhythm (a cycle of one and a half to four minutes, lit for most of it),
+## so now and then one switches on or off; the change takes about a second.
+func _window_light(key: int) -> float:
+	var period: float = 90.0 + float((key * 37) % 150)
+	var wave: float = sin(_time * TAU / period + key * 1.9)
+	return smoothstep(-0.37, -0.33, wave)
+
+
+func _draw_window(r: Rect2, light: float) -> void:
+	_gradient(r.position.y, r.end.y, Color("#3E4C63"), Color("#2C3648"), r.position.x, r.end.x)
+	if light > 0.0:
 		for ring: int in 3:
-			draw_rect(r.grow(3.0 + ring * 3.0), Color(LIT, 0.05))
-		_gradient(r.position.y, r.end.y, LIT.lightened(0.1), Color(0.98, 0.66, 0.35), r.position.x, r.end.x)
-	else:
-		_gradient(r.position.y, r.end.y, Color("#3E4C63"), Color("#2C3648"), r.position.x, r.end.x)
+			draw_rect(r.grow(3.0 + ring * 3.0), Color(LIT, 0.05 * light))
+		_gradient(r.position.y, r.end.y, Color(LIT.lightened(0.1), light), Color(0.98, 0.66, 0.35, light), r.position.x, r.end.x)
 	draw_line(Vector2(r.get_center().x, r.position.y), Vector2(r.get_center().x, r.end.y), Color(0.15, 0.13, 0.18, 0.7), 1.5)
 	draw_line(Vector2(r.position.x, r.get_center().y), Vector2(r.end.x, r.get_center().y), Color(0.15, 0.13, 0.18, 0.7), 1.5)
 	draw_rect(r, Color("#D9D2C6"), false, 2.0)

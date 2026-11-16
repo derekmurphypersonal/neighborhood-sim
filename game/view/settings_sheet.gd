@@ -24,6 +24,7 @@ var _sound_slider: HSlider
 var _music_value: Label
 var _sound_value: Label
 var _fullscreen: Button
+var _tips: Button
 var _tween: Tween
 var _open: bool = false
 
@@ -53,11 +54,11 @@ func _ready() -> void:
 	column.add_child(title)
 	column.add_child(HSeparator.new())
 
-	var music: Array = _slider_row(column, "Music volume", "The waltz that plays in the background  (M turns it on or off)")
+	var music: Array = _slider_row(column, "Music volume", "The background music, by day and in the evening  (M turns it on or off)")
 	_music_slider = music[0]
 	_music_value = music[1]
 	_music_slider.value_changed.connect(func(value: float) -> void: _on_volume("music_volume", value))
-	var sound: Array = _slider_row(column, "Sounds volume", "Chimes for news, and the birds and crickets outside  (N turns them on or off)")
+	var sound: Array = _slider_row(column, "Sounds volume", "Chimes, clicks and doors, and the birds and crickets outside  (N turns them on or off)")
 	_sound_slider = sound[0]
 	_sound_value = sound[1]
 	_sound_slider.value_changed.connect(func(value: float) -> void: _on_volume("sound_volume", value))
@@ -74,6 +75,20 @@ func _ready() -> void:
 	_fullscreen.toggled.connect(_on_fullscreen)
 	screen_row.add_child(_fullscreen)
 	column.add_child(screen_row)
+
+	var tips_row: HBoxContainer = HBoxContainer.new()
+	var tips_label: Label = _row_label("Show tips")
+	tips_label.tooltip_text = "Short tips the first time something happens. Switching them back on shows them all again."
+	tips_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	tips_row.add_child(tips_label)
+	_tips = Button.new()
+	_tips.toggle_mode = true
+	_tips.focus_mode = Control.FOCUS_NONE
+	_tips.custom_minimum_size = Vector2(90, 0)
+	_tips.tooltip_text = tips_label.tooltip_text
+	_tips.toggled.connect(_on_tips)
+	tips_row.add_child(_tips)
+	column.add_child(tips_row)
 
 	var hint: Label = Label.new()
 	hint.text = "Settings are kept on this computer for next time."
@@ -171,6 +186,7 @@ func open(settings: Dictionary) -> void:
 	_music_slider.set_value_no_signal(roundf(float(_settings["music_volume"]) * 100.0))
 	_sound_slider.set_value_no_signal(roundf(float(_settings["sound_volume"]) * 100.0))
 	_fullscreen.set_pressed_no_signal(bool(_settings["fullscreen"]))
+	_tips.set_pressed_no_signal(bool(_settings.get("show_tips", true)))
 	_show_values()
 	if _open:
 		return
@@ -227,7 +243,14 @@ func _on_fullscreen(on: bool) -> void:
 	changed.emit(_settings.duplicate())
 
 
+func _on_tips(on: bool) -> void:
+	_settings["show_tips"] = on
+	_show_values()
+	changed.emit(_settings.duplicate())
+
+
 func _show_values() -> void:
 	_music_value.text = "Off" if _music_slider.value <= 0 else "%d%%" % int(_music_slider.value)
 	_sound_value.text = "Off" if _sound_slider.value <= 0 else "%d%%" % int(_sound_slider.value)
 	_fullscreen.text = "On" if _fullscreen.button_pressed else "Off"
+	_tips.text = "On" if _tips.button_pressed else "Off"

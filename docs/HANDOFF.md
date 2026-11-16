@@ -1,6 +1,6 @@
 # Handoff
 
-Last updated: 2026-11-15, by Claude (Opus 5.5), after the third M1-P round.
+Last updated: 2026-11-15, by Claude (Opus 5.5), after the fourth M1-P round.
 
 This file says what is in progress and what is next. Settled matters are in [DECISIONS.md](../DECISIONS.md) and [ROADMAP.md](ROADMAP.md) and are not repeated here. Read `DECISIONS.md` first, then this.
 
@@ -46,9 +46,20 @@ Three subagents worked in parallel and were all cut off by a usage limit before 
 
 Not known: whether each agent finished every item on its list (for example a minimum window size and window title). Anything missing will show up on the next pass.
 
+### Fourth round (Derek tried round three on the Mac: "looks great")
+
+Three subagents on Fable 5.2. The map agent stopped on a usage limit before reporting; its work was checked in the working tree (it parses, runs, and the features below are present in the code) and committed. The other two finished and reported.
+
+- **Map:** dashed path and marker to where the selected person was sent; click ripples; doors that swing when people go in and out; a wave when a conversation starts; a cat and a dog (invented decoration, asleep at night); a card about the person under the pointer. Not confirmed: the draw-time measurement and any performance work the agent planned.
+- **Building page:** a drawn page with the building's own sketch and separately tagged panels: what the record says (NOT DOCUMENTED on Fixture Street), the invented interior with a floor plan, who lives here (fictional), and the store's hours.
+- **Tips:** one-time contextual tips (first select, first conversation, payday, week summary, night, goal done), a Show tips setting; never written by the self-check or screenshots.
+- **Tooltips** across the panel; neighbor row hover; Talk greyed with a reason when it can't be used.
+- **Sound:** synthesized interface sounds (click, hover on title buttons, sheet open/close, order, doors, goal flourish, payday bell) and a calmer evening music piece that crossfades with the waltz by the game clock; the title plays the evening piece.
+- **Title:** parallax, twinkling stars, windows lighting on and off, fade-in, "M1-P preview build" line. Window title "The Neighborhood (working title)", minimum size 960×540.
+
 ## 3. Test status
 
-Run in the cloud on Linux, Godot 4.7.2 stable, after the third round (also: a normal launch through the title screen for 600 frames, no script errors):
+Run in the cloud on Linux, Godot 4.7.2 stable, after the fourth round (also: a normal launch through the title screen for 600 frames, no script errors):
 
 | Command | Result |
 |---|---|

@@ -1,19 +1,27 @@
 """Generates the game's placeholder audio from scratch.
 
-Everything here is synthesized by this script: an original, simple waltz
-loop, two short chimes, and two ambience loops (a daytime outdoor bed with
-birdsong, and a night bed with crickets). Nothing is sampled or copied from
-any recording or existing composition. Run from the repository root:
+Everything here is synthesized by this script: two original, simple music
+loops (a waltz for the day and a slower piece for the evening), short chimes,
+two ambience loops (a daytime outdoor bed with birdsong, and a night bed with
+crickets) and a handful of short interface sounds (clicks, a page swish, a
+door, a bell). Nothing is sampled or copied from any recording or existing
+composition, and no sound imitates a particular product's sound.
+Run from the repository root:
 
+    python3 tools/make_audio.py --missing    # only files that do not exist yet
     python3 tools/make_audio.py              # everything
     python3 tools/make_audio.py ambience     # only the two ambience loops
-    python3 tools/make_audio.py music        # only the waltz and the chimes
+    python3 tools/make_audio.py music        # only the waltz and the two chimes
+    python3 tools/make_audio.py evening      # only the evening piece
+    python3 tools/make_audio.py ui           # only the interface sounds
 
 Requires numpy and ffmpeg. Writes game/audio/*.ogg. The synthesis is seeded,
 and the encoder is run in bit-exact mode, so a rerun gives the same files.
 (The waltz and chimes were first written before bit-exact mode was used, so
-regenerating them changes their bytes, though not their sound.)
+regenerating them changes their bytes, though not their sound. --missing
+leaves every existing file alone.)
 """
+import os
 import subprocess, sys, wave
 import numpy as np
 
@@ -232,15 +240,203 @@ def write(path: str, samples: np.ndarray, rate: int = RATE, quality: str = "4") 
     subprocess.run(["rm", wav_path], check=True)
 
 
+# --- The evening piece ---------------------------------------------------------
+# A second original placeholder: slower than the waltz, four beats to the bar,
+# in F, with broken chords under a sparse melody. Sixteen bars, about a minute.
+
+EVENING_BPM = 66
+EVENING_BEAT = 60.0 / EVENING_BPM
+EVENING_CHORDS = ["F", "Dm", "Bb", "C", "F", "Am", "Bb", "C", "Dm", "Bb", "F", "C", "Bb", "Am", "Gm", "C"]
+# Bass note, then the broken chord played on beats 1, 2, 3 and the half beat after.
+EVENING_VOICING = {
+    "F": ("F2", ["C3", "F3", "A3", "C4"]), "Dm": ("D2", ["A2", "D3", "F3", "A3"]),
+    "Bb": ("A#1", ["F3", "A#3", "D4", "F3"]), "C": ("C2", ["G2", "C3", "E3", "G3"]),
+    "Am": ("A1", ["E3", "A3", "C4", "E3"]), "Gm": ("G1", ["D3", "G3", "A#3", "D3"]),
+}
+# One entry per bar: (note, start beat, length in beats). Long notes, with rests.
+EVENING_MELODY = [
+    [("A4", 0, 3), ("C5", 3, 1)], [("D5", 0, 2), ("A4", 2, 2)], [("A#4", 0, 3), ("D5", 3, 1)], [("C5", 0, 4)],
+    [("A4", 1, 1), ("C5", 2, 2)], [("E5", 0, 3), ("C5", 3, 1)], [("D5", 0, 2), ("A#4", 2, 2)], [("G4", 0, 4)],
+    [("F5", 0, 3), ("D5", 3, 1)], [("D5", 0, 2), ("A#4", 2, 2)], [("C5", 0, 3), ("A4", 3, 1)], [("G4", 0, 2), ("E4", 2, 2)],
+    [("D5", 1, 1), ("F5", 2, 2)], [("E5", 0, 2), ("C5", 2, 2)], [("D5", 0, 2), ("A#4", 2, 2)], [("G4", 0, 3), ("E4", 3, 1)],
+]
+
+
+def make_evening() -> np.ndarray:
+    beat = EVENING_BEAT
+    bars = len(EVENING_CHORDS)
+    total = bars * 4 * beat
+    track = np.zeros(int(total * RATE) + RATE * 4)
+    for bar in range(bars):
+        bass, broken = EVENING_VOICING[EVENING_CHORDS[bar]]
+        t0 = bar * 4 * beat
+        place(track, tone(bass, beat * 3.8, 0.26, 0.10), t0)
+        for step, name in enumerate(broken):
+            place(track, tone(name, beat * 1.6, 0.065, 0.12), t0 + (1 + step * 0.75) * beat)
+        for name, start, length in EVENING_MELODY[bar]:
+            place(track, tone(name, beat * length * 1.2, 0.13, 0.18), t0 + start * beat)
+    # A longer, softer room than the waltz's, then fold the tail onto the start.
+    wet = track.copy()
+    for delay, gain in ((0.13, 0.28), (0.29, 0.18), (0.47, 0.11), (0.71, 0.06)):
+        shift = int(delay * RATE)
+        wet[shift:] += gain * track[:-shift]
+    body = int(total * RATE)
+    loop = wet[:body].copy()
+    tail = wet[body:]
+    loop[: len(tail)] += tail
+    return loop / np.max(np.abs(loop)) * 0.6
+
+
+# --- Interface sounds ------------------------------------------------------------
+# Short, soft and quiet. Each is built from decaying sines and shaped noise.
+
+def ui_rng(name: str) -> np.random.Generator:
+    return np.random.default_rng(sum(ord(c) * (i + 1) for i, c in enumerate(name)))
+
+
+def seconds_of(seconds: float) -> np.ndarray:
+    return np.arange(int(seconds * RATE)) / RATE
+
+
+def ping(hz: float, seconds: float, decay: float, attack: float = 0.003, glide: float = 1.0) -> np.ndarray:
+    """A decaying sine. glide is the ratio of the end pitch to the start pitch."""
+    t = seconds_of(seconds)
+    sweep = hz * glide ** (t / seconds)
+    phase = 2 * np.pi * np.cumsum(sweep) / RATE
+    return np.sin(phase) * np.minimum(t / attack, 1.0) * np.exp(-decay * t)
+
+
+def band_noise(seconds: float, low_hz: float, high_hz: float, rng: np.random.Generator) -> np.ndarray:
+    """Noise limited to a band by shaping its spectrum; unit RMS."""
+    n = int(seconds * RATE)
+    freqs = np.fft.rfftfreq(n, 1.0 / RATE)
+    shape = 1.0 / (1.0 + (low_hz / np.maximum(freqs, 1e-9)) ** 4) / (1.0 + (freqs / high_hz) ** 4)
+    noise = np.fft.irfft(np.fft.rfft(rng.standard_normal(n)) * shape, n)
+    return noise / np.sqrt(np.mean(noise ** 2))
+
+
+def finish(samples: np.ndarray, peak: float) -> np.ndarray:
+    """Removes any offset, fades the last few milliseconds to nothing, and sets the level."""
+    samples = samples - np.mean(samples)
+    edge = int(0.004 * RATE)
+    samples[:edge // 2] *= np.linspace(0.0, 1.0, edge // 2)
+    samples[-edge:] *= np.linspace(1.0, 0.0, edge)
+    return samples / np.max(np.abs(samples)) * peak
+
+
+def make_click() -> np.ndarray:
+    """A soft "tock": a short falling tone with a breath of noise at the front."""
+    t = seconds_of(0.07)
+    body = ping(760.0, 0.07, 70.0, 0.002, 0.7) + 0.35 * ping(1520.0, 0.07, 120.0, 0.002, 0.8)
+    tick = 0.25 * band_noise(0.07, 1500.0, 5000.0, ui_rng("click")) * np.exp(-400.0 * t)
+    return finish(body + tick, 0.35)
+
+
+def make_hover() -> np.ndarray:
+    """A very quiet tick."""
+    return finish(ping(1250.0, 0.04, 130.0, 0.004, 0.92), 0.12)
+
+
+def make_swish(opening: bool) -> np.ndarray:
+    """A page turning: breathy noise whose brightness rises (open) or falls (close)."""
+    seconds = 0.26 if opening else 0.20
+    rng = ui_rng("swish_open" if opening else "swish_close")
+    t = seconds_of(seconds)
+    dull = band_noise(seconds, 500.0, 1600.0, rng)
+    bright = band_noise(seconds, 1800.0, 6500.0, rng)
+    along = t / seconds if opening else 1.0 - t / seconds
+    envelope = np.sin(np.pi * (t / seconds) ** (0.6 if opening else 0.45)) ** 2
+    flutter = 1.0 + 0.25 * np.sin(2 * np.pi * 38.0 * t)
+    return finish(((1.0 - along) * dull + along * 0.8 * bright) * envelope * flutter, 0.22)
+
+
+def make_order() -> np.ndarray:
+    """Two quick rising notes: "understood"."""
+    track = np.zeros(int(0.30 * RATE))
+    for index, name in enumerate(("G5", "D6")):
+        note = ping(freq(name), 0.2, 22.0) + 0.2 * ping(freq(name) * 2, 0.2, 40.0)
+        place(track, note, index * 0.075)
+    return finish(track, 0.30)
+
+
+def thunk(seconds: float, hz: float, rng: np.random.Generator) -> np.ndarray:
+    """Wood meeting wood: a low falling thump with a dull knock of noise."""
+    t = seconds_of(seconds)
+    body = ping(hz, seconds, 28.0, 0.004, 0.6) + 0.5 * ping(hz * 2.3, seconds, 60.0, 0.003, 0.8)
+    knock = 0.5 * band_noise(seconds, 200.0, 1200.0, rng) * np.exp(-90.0 * t)
+    return body + knock
+
+
+def make_door(opening: bool) -> np.ndarray:
+    rng = ui_rng("door_open" if opening else "door_close")
+    track = np.zeros(int(0.42 * RATE))
+    if opening:
+        # The latch lifts, then the door comes away from its frame.
+        latch = 0.35 * band_noise(0.03, 1800.0, 5000.0, rng) * np.exp(-250.0 * seconds_of(0.03))
+        place(track, latch, 0.0)
+        place(track, 0.7 * thunk(0.3, 150.0, rng), 0.05)
+    else:
+        # The door meets the frame, and the latch drops a moment after.
+        place(track, thunk(0.3, 120.0, rng), 0.0)
+        latch = 0.22 * band_noise(0.03, 1500.0, 4500.0, rng) * np.exp(-250.0 * seconds_of(0.03))
+        place(track, latch, 0.07)
+    return finish(track, 0.38)
+
+
+def make_goal() -> np.ndarray:
+    """A small three-note flourish, the last note held a little."""
+    track = np.zeros(int(1.1 * RATE))
+    for index, (name, at, length) in enumerate((("G5", 0.0, 0.35), ("C6", 0.10, 0.35), ("E6", 0.20, 0.85))):
+        place(track, tone(name, length, 0.4, 0.35), at)
+        place(track, 0.06 * ping(freq(name) * 3, length, 9.0), at)
+    return finish(track, 0.45)
+
+
+def make_ding() -> np.ndarray:
+    """A small desk-bell "ding" after a soft mechanical knock, for payday."""
+    track = np.zeros(int(1.0 * RATE))
+    rng = ui_rng("ding")
+    place(track, 0.25 * thunk(0.12, 260.0, rng), 0.0)
+    base = freq("A6")
+    # Bell-like, slightly out-of-tune partials, the higher ones dying sooner.
+    for ratio, level, decay in ((1.0, 1.0, 5.0), (2.76, 0.35, 9.0), (5.40, 0.15, 16.0), (0.5, 0.2, 7.0)):
+        place(track, level * ping(base * ratio, 0.9, decay, 0.002), 0.06)
+    return finish(track, 0.40)
+
+
+# File name, what makes it, sample rate, encoder quality, and the group it is in.
+FILES = [
+    ("music_placeholder_waltz.ogg", make_music, RATE, "4", "music"),
+    ("chime_talk.ogg", lambda: make_chime(["E5", "A5"]), RATE, "4", "music"),
+    ("chime_notice.ogg", lambda: make_chime(["C5", "E5", "G5"]), RATE, "4", "music"),
+    ("ambience_day.ogg", make_day, AMBIENCE_RATE, "2", "ambience"),
+    ("ambience_night.ogg", make_night, AMBIENCE_RATE, "2", "ambience"),
+    ("music_placeholder_evening.ogg", make_evening, RATE, "4", "evening"),
+    ("ui_click.ogg", make_click, RATE, "3", "ui"),
+    ("ui_hover.ogg", make_hover, RATE, "3", "ui"),
+    ("ui_sheet_open.ogg", lambda: make_swish(True), RATE, "3", "ui"),
+    ("ui_sheet_close.ogg", lambda: make_swish(False), RATE, "3", "ui"),
+    ("ui_order.ogg", make_order, RATE, "3", "ui"),
+    ("door_open.ogg", lambda: make_door(True), RATE, "3", "ui"),
+    ("door_close.ogg", lambda: make_door(False), RATE, "3", "ui"),
+    ("chime_goal.ogg", make_goal, RATE, "3", "ui"),
+    ("chime_payday.ogg", make_ding, RATE, "3", "ui"),
+]
+GROUPS = ("all", "music", "ambience", "evening", "ui")
+
+
 if __name__ == "__main__":
-    which = sys.argv[1] if len(sys.argv) > 1 else "all"
-    if which not in ("all", "music", "ambience"):
-        sys.exit("usage: make_audio.py [all|music|ambience]")
-    if which in ("all", "music"):
-        write("game/audio/music_placeholder_waltz.ogg", make_music())
-        write("game/audio/chime_talk.ogg", make_chime(["E5", "A5"]))
-        write("game/audio/chime_notice.ogg", make_chime(["C5", "E5", "G5"]))
-    if which in ("all", "ambience"):
-        write("game/audio/ambience_day.ogg", make_day(), AMBIENCE_RATE, "2")
-        write("game/audio/ambience_night.ogg", make_night(), AMBIENCE_RATE, "2")
-    print("audio written")
+    args = sys.argv[1:]
+    only_missing = "--missing" in args
+    args = [a for a in args if a != "--missing"]
+    which = args[0] if args else "all"
+    if which not in GROUPS or len(args) > 1:
+        sys.exit("usage: make_audio.py [--missing] [%s]" % "|".join(GROUPS))
+    written = []
+    for name, maker, rate, quality, group in FILES:
+        path = "game/audio/" + name
+        if which not in ("all", group) or (only_missing and os.path.exists(path)):
+            continue
+        write(path, maker(), rate, quality)
+        written.append(name)
+    print("audio written: " + (", ".join(written) if written else "nothing (every file already exists)"))
