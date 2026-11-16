@@ -21,6 +21,8 @@ const WeekGoals := preload("res://sim/reports/week_goals.gd")
 const TitleScreen := preload("res://view/title_screen.gd")
 const SettingsSheet := preload("res://view/settings_sheet.gd")
 const ScreenFx := preload("res://view/screen_fx.gd")
+const HelpSheet := preload("res://view/help_sheet.gd")
+const FocusRing := preload("res://view/focus_ring.gd")
 
 const SCENARIO: String = "fixture_street_spring_1950"
 ## Game minutes per real second for each speed setting.
@@ -79,6 +81,9 @@ const FADE_OUT_SECONDS: float = 0.45
 const FADE_IN_SECONDS: float = 0.7
 ## From this time of the evening the "night" tip may be shown (minutes after midnight).
 const TIP_NIGHT_MINUTE: int = 22 * 60
+## Pictures taken with F12 go here, in the per-user data folder.
+const PICTURES_DIR: String = "user://screenshots"
+const FLASH_SECONDS: float = 0.45
 ## Indoor activities not worth a note over the house.
 const QUIET_INDOORS: Array[String] = ["At home", "Deciding what to do", "Heading home"]
 
@@ -134,7 +139,14 @@ var _settings: Dictionary = DEFAULT_SETTINGS.duplicate()
 var _fx: ScreenFx
 var _title: TitleScreen
 var _settings_sheet: SettingsSheet
+var _help_sheet: HelpSheet
 var _fader: ColorRect
+var _flash: ColorRect
+var _focus_ring: FocusRing
+## The speed to go back to when the help sheet is closed (-1: none kept).
+var _speed_before_help: int = -1
+## The last thing the player asked to see on the street: [kind, id].
+var _last_focus: Array = []
 ## True while a fade between the title and the game is running.
 var _busy: bool = false
 
@@ -201,6 +213,10 @@ func _build_front_layers() -> void:
 	_settings_sheet.changed.connect(_on_settings_changed)
 	_settings_sheet.closed.connect(func() -> void: _sound("sheet_close"))
 	front.add_child(_settings_sheet)
+	_help_sheet = HelpSheet.new()
+	_help_sheet.closed.connect(_on_help_closed)
+	front.add_child(_help_sheet)
+	_title.help_requested.connect(_open_help)
 
 	var fade_layer: CanvasLayer = CanvasLayer.new()
 	fade_layer.layer = 100
@@ -210,6 +226,12 @@ func _build_front_layers() -> void:
 	_fader.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_fader.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fade_layer.add_child(_fader)
+	# The camera flash when a picture is saved.
+	_flash = ColorRect.new()
+	_flash.color = Color(1, 1, 1, 0)
+	_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fade_layer.add_child(_flash)
 
 
 ## Makes a new game from the scenario and puts it on screen. Returns false
@@ -263,9 +285,19 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if key == KEY_F11:
 		_set_fullscreen(not bool(_settings["fullscreen"]))
 		return
+	if key == KEY_F12:
+		_save_picture()
+		return
 	if _settings_sheet.is_open():
 		if key == KEY_ESCAPE:
 			_settings_sheet.close()
+		return
+	if _help_sheet.is_open():
+		if key in [KEY_ESCAPE, KEY_H, KEY_F1]:
+			_help_sheet.close()
+		return
+	if (key == KEY_H or key == KEY_F1) and not _busy:
+		_open_help()
 		return
 	if world_view == null or _busy:
 		return
@@ -315,6 +347,11 @@ func _show_simulation(shown: Simulation) -> void:
 	world_view.room_clicked.connect(_on_room_clicked)
 	world_view.building_info_requested.connect(_show_building)
 	add_child(world_view)
+	# Over the street, under the panels.
+	if _focus_ring != null:
+		_focus_ring.queue_free()
+	_focus_ring = FocusRing.new()
+	_layer.add_child(_focus_ring)
 
 	hud = Hud.new()
 	hud.setup(simulation)
@@ -325,6 +362,8 @@ func _show_simulation(shown: Simulation) -> void:
 	hud.sound_toggled.connect(_set_sound)
 	hud.week_requested.connect(func() -> void: _show_week(_week_start, "This week so far"))
 	hud.menu_requested.connect(_show_menu)
+	hud.help_requested.connect(_open_help)
+	hud.focus_requested.connect(_focus)
 	hud.sheet_closed.connect(_on_sheet_closed)
 	_layer.add_child(hud)
 	hud.tips.tip_shown.connect(_on_tip_shown)
@@ -336,10 +375,12 @@ func _show_simulation(shown: Simulation) -> void:
 
 func _show_menu(note: String = "") -> void:
 	var lines: Array[String] = [
+		_week_so_far(), "",
 		"The game is paused.", "",
 		"[b]Save game[/b] keeps the game exactly as it is now, in one saved game that is replaced each time.",
 		"[b]Load game[/b] goes back to the saved game. Anything since then is lost.",
 		"[b]Settings[/b] sets the music and sound volume, and full screen.",
+		"[b]How to play[/b] shows the controls and what the panels mean.",
 		"[b]Main menu[/b] leaves this game for the title screen.", "",
 	]
 	var saved: Dictionary = SaveGame.read_file(save_path)
@@ -361,8 +402,36 @@ func _show_menu(note: String = "") -> void:
 		["Save game", _save_game, "Keep the game as it is now, replacing the last saved game"],
 		["Load game", _load_game, "Go back to the saved game; anything since then is lost"],
 		["Settings", _open_settings, "Music and sound volume, full screen, and tips"],
+		["How to play", _open_help, "Controls, panels and goals  (H or F1)"],
 		["Main menu", _confirm_main_menu, "Leave this game for the title screen"],
 	], "Resume")
+
+
+## A strip at the top of the menu: the day of the week, the money in and out
+## so far and how many of the things to try are done, all from the week's
+## reports (sim/reports), like the "This week" sheet.
+func _week_so_far() -> String:
+	var household_id: String = simulation.state.player_household_id()
+	var first_day: int = WeekSummary.week_start(simulation.clock.day_index)
+	var summary: Dictionary = WeekSummary.summarize(simulation.state, household_id, first_day, first_day + 6)
+	var goals: Array = WeekGoals.evaluate(simulation.state, household_id, first_day, first_day + 6, simulation.clock.day_index)
+	var done: int = 0
+	for goal: Dictionary in goals:
+		if goal["status"] == "done":
+			done += 1
+	var net: int = summary["net_cents"]
+	var money: String = "even so far"
+	if net != 0:
+		money = "[color=%s]%s %s[/color] so far" % ["#9fd38a" if net > 0 else "#ff9c86", "up" if net > 0 else "down", Describe.money(absi(net))]
+	var cells: Array[String] = [
+		"[font_size=11][color=#e0a526]DAY[/color][/font_size]\n[b]%s[/b], day %d of 7" % [SimDate.weekday_name(simulation.clock.day_index), simulation.clock.day_index - first_day + 1],
+		"[font_size=11][color=#e0a526]MONEY THIS WEEK[/color][/font_size]\n[b]%s[/b]" % money,
+		"[font_size=11][color=#e0a526]THINGS TO TRY[/color][/font_size]\n[b]%d of %d[/b] done" % [done, goals.size()],
+	]
+	var row: String = ""
+	for cell: String in cells:
+		row += "[cell bg=#2f5d62 padding=10,6,10,6]%s[/cell]" % cell
+	return "[table=3]%s[/table]" % row
 
 
 ## Saves the game. Returns "" or the reason it could not be saved.
@@ -414,6 +483,90 @@ func _on_sheet_closed() -> void:
 	if _first_day_banner and world_view != null:
 		_first_day_banner = false
 		_fx.show_day(simulation.clock.day_index, "THE WEEK BEGINS")
+
+
+# --- Help, pictures and finding things on the street ------------------------
+
+## Opens "How to play" over whatever is on screen. In a game the clock stops
+## while it is read, unless a sheet under it has stopped it already.
+func _open_help() -> void:
+	if _help_sheet.is_open():
+		return
+	if hud != null and not hud.sheet_is_open() and _speed_before_help < 0:
+		_speed_before_help = speed_index
+		speed_index = 0
+		_pending_minutes = 0.0
+	_sound("sheet_open")
+	_help_sheet.open()
+
+
+func _on_help_closed() -> void:
+	_sound("sheet_close")
+	if _speed_before_help >= 0 and hud != null and not hud.sheet_is_open():
+		speed_index = _speed_before_help
+	_speed_before_help = -1
+
+
+## Glides the camera to a person or a building and marks it for a moment.
+func _focus(kind: String, id: String) -> void:
+	if world_view == null:
+		return
+	_last_focus = [kind, id]
+	if kind == "person":
+		world_view.focus_on_person(id)
+		_focus_ring.show_at(func() -> Dictionary: return _person_mark(id))
+	elif kind == "building":
+		world_view.focus_on_building(id)
+		_focus_ring.show_at(func() -> Dictionary: return _building_mark(id))
+
+
+## Where the focus ring goes for a person: their spot outdoors, their
+## building's door indoors; {} when away from the street.
+func _person_mark(person_id: String) -> Dictionary:
+	if world_view == null or simulation == null:
+		return {}
+	var anchor: Dictionary = world_view.anchor_of(simulation.state.people[person_id])
+	if anchor.is_empty():
+		return {}
+	return {"point": world_view.to_screen(anchor["point"]), "lift": anchor["lift"]}
+
+
+func _building_mark(building_id: String) -> Dictionary:
+	if world_view == null or simulation == null:
+		return {}
+	var anchor: Dictionary = world_view.building_anchor(building_id)
+	return {"point": world_view.to_screen(anchor["point"]), "lift": anchor["lift"]}
+
+
+## F12: saves a picture of the screen in the per-user folder, with a camera
+## flash. Returns the file written, or "" if none was: the self-check and
+## screenshot runs never write one.
+func _save_picture() -> String:
+	if _checking or _screenshot_path != "":
+		return ""
+	var now: Dictionary = Time.get_datetime_dict_from_system()
+	var file_name: String = "neighborhood-%04d%02d%02d-%02d%02d%02d.png" % [now["year"], now["month"], now["day"], now["hour"], now["minute"], now["second"]]
+	var path: String = PICTURES_DIR.path_join(file_name)
+	DirAccess.make_dir_recursive_absolute(PICTURES_DIR)
+	var image: Image = get_viewport().get_texture().get_image()
+	if image == null or image.save_png(path) != OK:
+		_say("The picture could not be saved.")
+		return ""
+	_flash.color.a = 0.75
+	create_tween().tween_property(_flash, "color:a", 0.0, FLASH_SECONDS).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_sound("click")
+	_say("Picture saved")
+	if hud != null:
+		hud.show_message("Picture saved to " + ProjectSettings.globalize_path(path))
+	return path
+
+
+## A short note: a toast over the street in a game, a line on the title.
+func _say(text: String) -> void:
+	if world_view != null:
+		world_view.add_toast(text)
+	else:
+		_title.show_note(text)
 
 
 # --- Title screen, settings and fades ----------------------------------------
@@ -512,6 +665,9 @@ func _close_game() -> void:
 		hud.queue_free()
 	if world_view != null:
 		world_view.queue_free()
+	if _focus_ring != null:
+		_focus_ring.queue_free()
+	_focus_ring = null
 	hud = null
 	world_view = null
 	simulation = null
@@ -1075,6 +1231,7 @@ func _self_check() -> void:
 	DirAccess.remove_absolute(save_path.get_base_dir())
 	if _last_activity.size() != simulation.state.people.size():  # one per resident
 		problems.append("not everyone has an activity bubble")
+	_check_help_and_focus(problems)
 	await _check_front_screens(problems)
 	_note_anything_playing(problems, "by the end of the check")
 	if problems.is_empty():
@@ -1098,6 +1255,37 @@ func _note_anything_playing(problems: Array[String], when: String) -> void:
 	for player: AudioStreamPlayer in _audio_players():
 		if player.playing or player.get_playback_position() > 0.0:
 			problems.append("%s is playing %s" % [player.stream.resource_path if player.stream.resource_path != "" else str(player), when])
+
+
+## Part of the self-check: clicking the newest feed line finds it on the
+## street, "How to play" opens and closes with the clock stopped meanwhile,
+## and F12 writes no picture during the check.
+func _check_help_and_focus(problems: Array[String]) -> void:
+	hud.refresh(selected_id, speed_index, music_on, sound_on)
+	_last_focus = []
+	if not hud.focus_feed_line(0):
+		problems.append("clicking the newest feed line found nothing to show")
+	elif _last_focus.is_empty() or not _focus_ring.is_showing():
+		problems.append("the feed line did not move the camera and mark the place")
+	else:
+		print("SELF-CHECK  the newest feed line shows %s %s on the street" % _last_focus)
+	speed_index = 1
+	_open_help()
+	if not _help_sheet.is_open() or speed_index != 0:
+		problems.append("How to play did not open, or did not stop the clock")
+	_help_sheet.close()
+	if _help_sheet.is_open() or speed_index != 1:
+		problems.append("closing How to play did not give the clock back its speed")
+	else:
+		print("SELF-CHECK  How to play opened and closed; the clock stopped meanwhile")
+	var pictures: String = ProjectSettings.globalize_path(PICTURES_DIR)
+	var before: int = DirAccess.get_files_at(pictures).size() if DirAccess.dir_exists_absolute(pictures) else 0
+	var written: String = _save_picture()
+	var after: int = DirAccess.get_files_at(pictures).size() if DirAccess.dir_exists_absolute(pictures) else 0
+	if written != "" or after != before:
+		problems.append("F12 saved a picture during the self-check")
+	else:
+		print("SELF-CHECK  F12 saved no picture during the check")
 
 
 ## Part of the self-check: the settings sheet changes the volume live, the
@@ -1125,8 +1313,8 @@ func _check_front_screens(problems: Array[String]) -> void:
 	await _go_to_title()
 	if world_view != null or hud != null or not _title.visible:
 		problems.append("Main menu did not return to the title screen")
-	elif _title.button_count() != 4:
-		problems.append("the title screen has %d buttons, expected 4" % _title.button_count())
+	elif _title.button_count() != 5:
+		problems.append("the title screen has %d buttons, expected 5" % _title.button_count())
 	else:
 		print("SELF-CHECK  returned to the title screen; Continue is %s" % ("enabled" if FileAccess.file_exists(save_path) else "disabled (no saved game)"))
 	_open_settings()
@@ -1175,6 +1363,8 @@ func _show_for_screenshot() -> void:
 			_confirm_main_menu()
 		"tip":
 			_tip("select")
+		"help":
+			_open_help()
 
 
 ## A short welcome at the start of a new game: what this is, and the controls.
@@ -1193,7 +1383,9 @@ func _show_welcome() -> void:
 		"  [b]Space[/b] pause      [b]1 2 3[/b] speed      [b]Esc[/b] menu and settings",
 		"  [b]M[/b] music on or off      [b]N[/b] sounds on or off      [b]F11[/b] full screen",
 		"  [b]Scroll[/b] zoom      [b]Drag[/b] or [b]arrows[/b] look around      [b]R[/b] reset the view",
-		"  [b]F[/b] follow the selected person",
+		"  [b]F[/b] follow the selected person      [b]H[/b] how to play      [b]F12[/b] save a picture",
+		"",
+		"Click a line in [i]What has happened[/i] to see where it happened.",
 	]
 	_open_sheet("Welcome to Fixture Street", "\n".join(lines), [], "Start the week")
 

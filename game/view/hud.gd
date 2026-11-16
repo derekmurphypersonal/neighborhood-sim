@@ -13,6 +13,10 @@ signal music_toggled(on: bool)
 signal sound_toggled(on: bool)
 signal week_requested
 signal menu_requested
+signal help_requested
+## The player asked to see something on the street: kind is "person" or
+## "building". main.gd moves the camera and highlights it.
+signal focus_requested(kind: String, id: String)
 signal sheet_closed
 
 const Simulation := preload("res://sim/simulation.gd")
@@ -29,7 +33,7 @@ const Tips := preload("res://view/tips.gd")
 const SPEED_LABELS: Array[String] = ["Pause", "1 min/s", "10 min/s", "1 hour/s"]
 ## Keyboard shortcuts as handled in main.gd's _unhandled_key_input.
 const SPEED_TIPS: Array[String] = [
-	"Pause the clock  (Space toggles pause)",
+	"Pause the clock  (Space)",
 	"One game minute each second  (1)",
 	"Ten game minutes each second  (2)",
 	"One game hour each second  (3)",
@@ -83,6 +87,8 @@ const GOALS_RECT: Rect2 = Rect2(20, 378, 232, 130)
 const GOAL_ROWS: int = 7
 const GOAL_ROW_HEIGHT: int = 15
 const GOAL_FONT_SIZE: int = 12
+const GOAL_METER_WIDTH: float = 22.0
+const GOAL_COUNT_WIDTH: float = 28.0
 ## How long a goal's row shines after it is done, in real milliseconds.
 const GOAL_SHINE_MS: int = 1400
 ## How quickly need bars glide to a new value (per second), and how long a
@@ -92,6 +98,14 @@ const FEED_SLIDE_MS: int = 380
 const FEED_ROW_HEIGHT: int = 20
 ## Regard shown as a full bar in the neighbors list.
 const REGARD_METER_SPAN: int = 40
+const MESSAGE_FONT_SIZE: int = 12
+## The note under the top bar stops short of the side panel and its badge.
+const MESSAGE_MAX_WIDTH: float = 860.0
+const SPEED_DIAL_SIZE: Vector2 = Vector2(34, 26)
+## How long one sweep of the fast-forward shimmer takes, in real milliseconds.
+const SHIMMER_MS: int = 1600
+const FEED_HOVER: Color = Color(0.18, 0.36, 0.38, 0.10)
+const NEIGHBOR_NAME_WIDTH: int = 78
 const WORD_COLORS: Dictionary = {
 	"Friend": Color("#3E7A33"), "Friendly": Color("#5E8C4A"), "Acquaintance": Color("#3B2F2A"),
 	"Cool": Color("#4F6E8C"), "Unfriendly": Color("#B5442F"), "Stranger": Color("#9A8676"),
@@ -150,6 +164,9 @@ var _goals: Array = []
 ## goal id -> status last shown, and id -> when it began to shine
 var _goal_seen: Dictionary = {}
 var _goal_shine: Dictionary = {}
+var _goal_track: StyleBoxFlat
+var _goal_fill: StyleBoxFlat
+var _goal_fill_done: StyleBoxFlat
 var _sheet_content: VBoxContainer
 ## The first-time tips; main.gd offers them and keeps the list of those seen.
 var tips: Tips
@@ -160,6 +177,16 @@ var _tab_selected: String = ""
 var _tab_face_kind: String = ""
 var _neighbor_scroll: ScrollContainer
 var _hover_neighbor: String = ""
+## The neighbors list is sized once to a whole number of rows, so the last
+## row shown is never cut in half by the panel's edge.
+var _neighbor_rows_fitted: bool = false
+var _speed_dial: Control
+var _shimmer: Control
+var _speed_index: int = -1
+## The dial's needle, in radians, gliding toward the speed chosen.
+var _dial_angle: float = -1.0
+var _dial_target: float = 0.0
+var _message_note: PanelContainer
 
 
 func setup(sim: Simulation) -> void:
@@ -168,6 +195,9 @@ func setup(sim: Simulation) -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	theme = _make_theme()
 	_need_fills = [_box(LEAF, 6), _box(MUSTARD, 6), _box(CHERRY, 6)]
+	_goal_track = _with_border(_box(Color(PAPER_DARK, 0.9), 3), PAPER_DARK.darkened(0.2), 1)
+	_goal_fill = _box(TEAL, 3)
+	_goal_fill_done = _box(LEAF, 3)
 	_build_top_bar()
 	_build_side_panel()
 	_build_feed()
@@ -179,6 +209,18 @@ func setup(sim: Simulation) -> void:
 
 func show_message(text: String) -> void:
 	_message_label.text = text
+	# A long message is cut with an ellipsis before it reaches the side panel;
+	# the whole of it is in the tooltip.
+	# A label that trims has no width of its own, so it is given one here.
+	var font: Font = ThemeDB.fallback_font
+	var width: float = ceilf(font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, MESSAGE_FONT_SIZE).x) + 2.0
+	var wide: bool = width > MESSAGE_MAX_WIDTH
+	_message_label.clip_text = wide
+	_message_label.custom_minimum_size.x = minf(width, MESSAGE_MAX_WIDTH)
+	_message_note.visible = text != ""
+	_message_note.tooltip_text = text if wide else ""
+	_message_note.mouse_filter = Control.MOUSE_FILTER_STOP if wide else Control.MOUSE_FILTER_IGNORE
+	_message_note.reset_size()
 
 
 # --- The look ----------------------------------------------------------------
@@ -340,6 +382,13 @@ func _build_top_bar() -> void:
 	_time_label.add_theme_color_override("font_outline_color", TEAL_DARK)
 	_time_label.add_theme_constant_override("outline_size", 4)
 	bar.add_child(_time_label)
+	# A faint light sweeping across the clock while time runs at its fastest.
+	_shimmer = Control.new()
+	_shimmer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_shimmer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_shimmer.clip_contents = true
+	_shimmer.draw.connect(_draw_shimmer)
+	_time_label.add_child(_shimmer)
 	_date_label = Label.new()
 	_date_label.custom_minimum_size = Vector2(232, 0)
 	_date_label.add_theme_font_size_override("font_size", 16)
@@ -352,10 +401,17 @@ func _build_top_bar() -> void:
 		button.toggle_mode = true
 		button.focus_mode = Control.FOCUS_NONE
 		button.tooltip_text = SPEED_TIPS[index]
+		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		button.pressed.connect(func() -> void: speed_chosen.emit(index))
 		bar.add_child(button)
 		_speed_buttons.append(button)
-	bar.add_child(_spacer(10))
+	_speed_dial = Control.new()
+	_speed_dial.custom_minimum_size = Vector2(SPEED_DIAL_SIZE.x, SPEED_DIAL_SIZE.y)
+	_speed_dial.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_speed_dial.mouse_filter = Control.MOUSE_FILTER_STOP
+	_speed_dial.draw.connect(_draw_speed_dial)
+	bar.add_child(_speed_dial)
+	bar.add_child(_spacer(6))
 	_music_button = _toggle("Music", func(on: bool) -> void: music_toggled.emit(on))
 	_music_button.tooltip_text = "Turn the music on or off  (M)"
 	bar.add_child(_music_button)
@@ -368,8 +424,11 @@ func _build_top_bar() -> void:
 	filler.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.add_child(filler)
 	var week: Button = _button("This week", func() -> void: week_requested.emit())
-	week.tooltip_text = "How the week is going for your household"
+	week.tooltip_text = "How the week is going for your household: money, neighbors and things to try"
 	bar.add_child(week)
+	var help: Button = _button("Help", func() -> void: help_requested.emit())
+	help.tooltip_text = "How to play: controls, panels and goals  (H or F1)"
+	bar.add_child(help)
 	var menu: Button = _button("Menu", func() -> void: menu_requested.emit())
 	menu.tooltip_text = "Save, load, settings and the main menu  (Esc)"
 	bar.add_child(menu)
@@ -379,10 +438,12 @@ func _build_top_bar() -> void:
 	note.position = Vector2(20, 47)
 	note.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(note)
+	_message_note = note
 	_message_label = Label.new()
-	_message_label.text = "Click one of your household (blue), then a house or a neighbor. Right-click a building for details. Scroll to zoom, drag to look around."
-	_message_label.add_theme_font_size_override("font_size", 12)
+	_message_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_message_label.add_theme_font_size_override("font_size", MESSAGE_FONT_SIZE)
 	note.add_child(_message_label)
+	show_message("Click one of your household (blue), then a house or a neighbor. Right-click a building for details. H for help.")
 
 	if simulation.area.placeholder:
 		# Required on screen by the project rules (D-035): this street is made up.
@@ -410,6 +471,58 @@ func _draw_sky() -> void:
 			var direction: Vector2 = Vector2.RIGHT.rotated(ray * TAU / 8.0)
 			_sky.draw_line(middle + direction * 8.0, middle + direction * 11.0, MUSTARD, 2.0)
 		_sky.draw_circle(middle, 6.0, MUSTARD)
+
+
+## A little gauge beside the speed buttons: four ticks from pause (left) to
+## 1 hour/s (right) and a needle that swings to the speed in use.
+func _draw_speed_dial() -> void:
+	var centre: Vector2 = Vector2(_speed_dial.size.x / 2.0, _speed_dial.size.y - 6.0)
+	var radius: float = 13.0
+	_speed_dial.draw_arc(centre, radius, PI, TAU, 24, Color(PAPER, 0.30), 3.0, true)
+	if _dial_angle > PI + 0.01:
+		_speed_dial.draw_arc(centre, radius, PI, _dial_angle, 24, MUSTARD, 3.0, true)
+	for index: int in SPEED_LABELS.size():
+		var angle: float = PI + PI * float(index) / float(SPEED_LABELS.size() - 1)
+		var direction: Vector2 = Vector2.from_angle(angle)
+		var lit: bool = index <= _speed_index
+		_speed_dial.draw_line(centre + direction * (radius + 2.0), centre + direction * (radius + 5.0),
+				MUSTARD if lit else Color(PAPER, 0.45), 1.5, true)
+	var needle: Vector2 = Vector2.from_angle(_dial_angle)
+	_speed_dial.draw_line(centre, centre + needle * (radius - 2.0), PAPER, 2.0, true)
+	_speed_dial.draw_circle(centre, 3.0, CHERRY if _speed_index == 0 else MUSTARD)
+
+
+## While time runs at its fastest, a soft band of light sweeps over the clock.
+func _draw_shimmer() -> void:
+	if _speed_index != SPEED_LABELS.size() - 1:
+		return
+	var phase: float = float(Time.get_ticks_msec() % SHIMMER_MS) / float(SHIMMER_MS)
+	var x: float = lerpf(-30.0, _shimmer.size.x + 30.0, phase)
+	var h: float = _shimmer.size.y
+	_shimmer.draw_colored_polygon(PackedVector2Array([
+		Vector2(x - 10, h), Vector2(x + 2, 0), Vector2(x + 14, 0), Vector2(x + 2, h),
+	]), Color(1.0, 0.97, 0.85, 0.22))
+	_shimmer.draw_colored_polygon(PackedVector2Array([
+		Vector2(x + 6, h), Vector2(x + 18, 0), Vector2(x + 22, 0), Vector2(x + 10, h),
+	]), Color(1.0, 0.97, 0.85, 0.12))
+
+
+## Keeps the dial and shimmer in step with the speed (called every refresh).
+func _refresh_speed(speed_index: int) -> void:
+	if speed_index != _speed_index:
+		_speed_index = speed_index
+		_dial_target = PI + PI * float(speed_index) / float(SPEED_LABELS.size() - 1)
+		_speed_dial.tooltip_text = "Speed now: %s\nKeys 1, 2 and 3 set the speed; Space pauses" % (
+			"paused" if speed_index == 0 else SPEED_LABELS[speed_index])
+		_shimmer.queue_redraw()
+	if _dial_angle < 0.0:
+		_dial_angle = _dial_target
+		_speed_dial.queue_redraw()
+	if not is_equal_approx(_dial_angle, _dial_target):
+		_dial_angle = move_toward(_dial_angle, _dial_target, 0.12)
+		_speed_dial.queue_redraw()
+	if _speed_index == SPEED_LABELS.size() - 1:
+		_shimmer.queue_redraw()
 
 
 ## A small "Paused" tag in the top bar, shown while the clock is stopped. It
@@ -456,10 +569,13 @@ func _build_side_panel() -> void:
 	_player_ids = household["member_ids"]
 	var title: HBoxContainer = HBoxContainer.new()
 	column.add_child(title)
-	title.add_child(_heading(household["name"]))
-	var filler: Control = Control.new()
-	filler.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.add_child(filler)
+	var house_name: Label = _heading(household["name"])
+	house_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	house_name.clip_text = true
+	house_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	house_name.tooltip_text = household["name"]
+	house_name.mouse_filter = Control.MOUSE_FILTER_PASS
+	title.add_child(house_name)
 	var caption: Label = _caption("YOUR HOUSEHOLD")
 	caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	title.add_child(caption)
@@ -472,7 +588,8 @@ func _build_side_panel() -> void:
 		button.text = simulation.state.people[person_id]["given_name"]
 		button.toggle_mode = true
 		button.focus_mode = Control.FOCUS_NONE
-		button.pressed.connect(func() -> void: person_chosen.emit(person_id))
+		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		button.pressed.connect(func() -> void: _tab_pressed(person_id))
 		members.add_child(button)
 		_member_buttons[person_id] = button
 		# A tiny portrait at the left of the tab, shown while it is selected.
@@ -624,15 +741,28 @@ func _neighbor_row(person_id: String) -> PanelContainer:
 	var row: HBoxContainer = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	shaded.add_child(row)
+	# The name is a link: it finds the neighbor on the street.
 	var name: Label = Label.new()
 	name.text = person["given_name"]
-	name.custom_minimum_size = Vector2(78, 0)
+	name.custom_minimum_size = Vector2(NEIGHBOR_NAME_WIDTH, 0)
 	name.clip_text = true
+	name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name.add_theme_font_size_override("font_size", 12)
+	name.mouse_filter = Control.MOUSE_FILTER_STOP
+	name.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	name.tooltip_text = "Find %s on the street" % person["given_name"]
+	name.mouse_entered.connect(func() -> void: name.set_meta("hover", true); name.queue_redraw())
+	name.mouse_exited.connect(func() -> void: name.set_meta("hover", false); name.queue_redraw())
+	name.draw.connect(func() -> void: _draw_link_underline(name))
+	name.gui_input.connect(func(event: InputEvent) -> void:
+		if _is_left_click(event):
+			focus_requested.emit("person", person_id)
+			name.accept_event())
 	row.add_child(name)
 	var word: Label = Label.new()
 	word.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	word.clip_text = true
+	word.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	word.add_theme_font_size_override("font_size", 11)
 	row.add_child(word)
 	var meter: Control = Control.new()
@@ -644,6 +774,7 @@ func _neighbor_row(person_id: String) -> PanelContainer:
 	talk.theme_type_variation = "RowButton"
 	talk.text = "Talk"
 	talk.focus_mode = Control.FOCUS_NONE
+	talk.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	talk.pressed.connect(func() -> void: _talk_pressed(person_id))
 	row.add_child(talk)
 	var entry: Dictionary = {
@@ -656,11 +787,49 @@ func _neighbor_row(person_id: String) -> PanelContainer:
 	return shaded
 
 
+## Under a link's text while the pointer is on it.
+func _draw_link_underline(label: Label) -> void:
+	if not label.get_meta("hover", false):
+		return
+	var font: Font = label.get_theme_font("font")
+	var font_size: int = label.get_theme_font_size("font_size")
+	var width: float = minf(font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x, label.size.x)
+	var y: float = roundf((label.size.y + font.get_height(font_size)) / 2.0) - 1.0
+	label.draw_line(Vector2(0, y), Vector2(width, y), Color(TEAL, 0.8), 1.0)
+
+
+static func _is_left_click(event: InputEvent) -> bool:
+	if not event is InputEventMouseButton:
+		return false
+	var click: InputEventMouseButton = event
+	return click.button_index == MOUSE_BUTTON_LEFT and not click.pressed
+
+
 func _restripe_neighbors() -> void:
 	for index: int in _neighbor_order.size():
 		var person_id: String = _neighbor_order[index]
 		var variation: String = "RowA" if index % 2 == 0 else "RowB"
 		(_neighbor_rows[person_id]["panel"] as PanelContainer).theme_type_variation = "RowHover" if person_id == _hover_neighbor else variation
+
+
+## Once the panel is laid out, makes the neighbors list exactly as tall as a
+## whole number of rows, so it ends cleanly at the panel's foot; the rest
+## scroll. The few pixels left over go below the list.
+func _fit_neighbor_list() -> void:
+	if _neighbor_rows_fitted or _neighbor_order.is_empty():
+		return
+	var first: Control = _neighbor_rows[_neighbor_order[0]]["panel"]
+	var room: float = _neighbor_scroll.size.y
+	if first.size.y <= 0.0 or room <= first.size.y:
+		return
+	_neighbor_rows_fitted = true
+	var pitch: float = first.size.y + float(_neighbor_list.get_theme_constant("separation"))
+	var fits: int = floori((room + float(_neighbor_list.get_theme_constant("separation"))) / pitch)
+	if fits >= _neighbor_order.size():
+		return
+	_neighbor_scroll.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_neighbor_scroll.custom_minimum_size.y = fits * pitch - float(_neighbor_list.get_theme_constant("separation"))
+	_neighbor_scroll.get_v_scroll_bar().custom_step = pitch
 
 
 ## Lights the neighbor row under the pointer. Worked out from the pointer's
@@ -701,6 +870,13 @@ func _refresh_talk_buttons(selected_id: String) -> void:
 			talk.disabled = not allowed
 
 
+## A tab clicked while its member is already selected finds them on the street.
+func _tab_pressed(person_id: String) -> void:
+	if person_id == _tab_selected:
+		focus_requested.emit("person", person_id)
+	person_chosen.emit(person_id)
+
+
 func _draw_tab_face(face_control: Control, person_id: String) -> void:
 	var person: Dictionary = simulation.state.people[person_id]
 	var child: bool = SimDate.age_on(person["birth_day"], simulation.clock.day_index) < WorldView.CHILD_AGE
@@ -718,7 +894,7 @@ func _refresh_tabs(selected_id: String) -> void:
 		var tip: String = "%s %s, age %d: %s.%s" % [
 			person["given_name"], person["family_name"], SimDate.age_on(person["birth_day"], simulation.clock.day_index),
 			Describe.activity(simulation, person),
-			"" if chosen else "\nClick to select.",
+			"\nClick again to find them on the street." if chosen else "\nClick to select.",
 		]
 		if tip != _member_tips.get(person_id, ""):
 			_member_tips[person_id] = tip
@@ -757,8 +933,10 @@ func _build_feed() -> void:
 		var row: Control = Control.new()
 		row.custom_minimum_size = Vector2(0, FEED_ROW_HEIGHT)
 		row.clip_contents = true
-		# Takes the pointer only to show a line's full text when it is cut short.
+		# A line is a link to where it happened; its tooltip also shows the full
+		# text when the line is cut short.
 		row.mouse_filter = Control.MOUSE_FILTER_STOP
+		row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		var text: RichTextLabel = RichTextLabel.new()
 		text.bbcode_enabled = true
 		text.scroll_active = false
@@ -769,8 +947,14 @@ func _build_feed() -> void:
 		text.add_theme_font_size_override("normal_font_size", 13)
 		text.add_theme_font_size_override("bold_font_size", 13)
 		row.add_child(text)
-		var entry: Dictionary = {"row": row, "text": text, "event_id": -1, "kind": "", "slide": 0.0, "glow": 0.0}
+		var entry: Dictionary = {"row": row, "text": text, "event_id": -1, "kind": "", "slide": 0.0, "glow": 0.0, "hover": false}
 		row.draw.connect(func() -> void: _draw_feed_row(entry))
+		row.mouse_entered.connect(func() -> void: entry["hover"] = true; row.queue_redraw())
+		row.mouse_exited.connect(func() -> void: entry["hover"] = false; row.queue_redraw())
+		row.gui_input.connect(func(event: InputEvent) -> void:
+			if _is_left_click(event):
+				focus_feed_line(index)
+				row.accept_event())
 		column.add_child(row)
 		_feed_rows.append(entry)
 
@@ -782,7 +966,60 @@ func _draw_feed_row(entry: Dictionary) -> void:
 	var glow: float = entry["glow"]
 	if glow > 0.0:
 		row.draw_rect(Rect2(Vector2(entry["slide"], 0), Vector2(row.size.x, row.size.y - 1)), Color(MUSTARD, 0.30 * glow))
+	if entry["hover"]:
+		row.draw_rect(Rect2(Vector2.ZERO, Vector2(row.size.x, row.size.y - 1)), FEED_HOVER)
+		var text: RichTextLabel = entry["text"]
+		var right: float = minf(text.position.x + float(text.get_content_width()), row.size.x - 28.0)
+		row.draw_line(Vector2(text.position.x, row.size.y - 2.5), Vector2(right, row.size.y - 2.5), Color(TEAL, 0.55), 1.0)
+		# A small "find it" target at the end of the line.
+		var at: Vector2 = Vector2(row.size.x - 12.0, row.size.y / 2.0)
+		row.draw_arc(at, 5.0, 0.0, TAU, 16, TEAL, 1.5, true)
+		row.draw_circle(at, 1.6, TEAL)
+		for direction: Vector2 in [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]:
+			row.draw_line(at + direction * 6.0, at + direction * 8.5, TEAL, 1.5)
 	HudArt.event_icon(row, Vector2(11.0 + float(entry["slide"]), row.size.y / 2.0), entry["kind"], 8.0)
+
+
+## Asks main.gd to show where the feed's line (0 is the newest) happened.
+## Returns false if there is no such line or nothing to show.
+func focus_feed_line(slot: int) -> bool:
+	if slot < 0 or slot >= _feed_rows.size():
+		return false
+	var event_id: int = _feed_rows[slot]["event_id"]
+	var log: Array = simulation.state.event_log
+	for index: int in range(log.size() - 1, maxi(log.size() - 1 - _feed_rows.size(), -1), -1):
+		if log[index]["id"] == event_id:
+			var target: Array = event_target(log[index])
+			if target.is_empty():
+				return false
+			focus_requested.emit(target[0], target[1])
+			return true
+	return false
+
+
+## What to show on the street for an event: ["person", id] or
+## ["building", id], or [] if there is nothing to show. A conversation shows
+## the player's own household member if one took part; money news shows the
+## household's home, and shopping the store.
+func event_target(event: Dictionary) -> Array:
+	match event["type"]:
+		"conversation":
+			var who: String = event["b"] if _player_ids.has(event["b"]) and not _player_ids.has(event["a"]) else event["a"]
+			return ["person", who]
+		"birthday", "missed_work":
+			return ["person", event["person_id"]]
+		"order_failed":
+			if event.get("reason", "") == "closed" and event.has("place_id"):
+				return ["building", event["place_id"]]
+			return ["person", event["person_id"]]
+		"shopping":
+			var store: String = simulation.area.institution_of_kind("store")
+			return ["building", store] if store != "" else ["person", event["person_id"]]
+		"payday", "rent_paid", "empty_pantry", "household_short_of_money":
+			return ["building", simulation.state.households[event["household_id"]]["home_id"]]
+	if event.has("person_id"):
+		return ["person", event["person_id"]]
+	return []
 
 
 ## A small card under the home cutaway listing this week's things to try.
@@ -836,6 +1073,15 @@ func show_goals(goals: Array) -> void:
 		row.queue_redraw()
 
 
+## Draws one line of text, ending in an ellipsis if it is wider than width.
+static func _draw_fitted(canvas: CanvasItem, font: Font, baseline_at: Vector2, text: String, width: float, font_size: int, color: Color) -> void:
+	var line: TextLine = TextLine.new()
+	line.add_string(text, font, font_size)
+	line.width = maxf(width, 1.0)
+	line.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	line.draw(canvas.get_canvas_item(), baseline_at - Vector2(0, line.get_line_ascent()), color)
+
+
 func _draw_goal(row: Control, index: int) -> void:
 	if index >= _goals.size():
 		return
@@ -857,16 +1103,19 @@ func _draw_goal(row: Control, index: int) -> void:
 		color = CHERRY
 	var baseline: float = middle + GOAL_FONT_SIZE * 0.35
 	var multi: bool = int(goal["target"]) > 1
-	var title_width: float = row.size.x - (50.0 if multi else 18.0)
-	row.draw_string(font, Vector2(17, baseline), goal["title"], HORIZONTAL_ALIGNMENT_LEFT, title_width, GOAL_FONT_SIZE, color)
+	var title_width: float = row.size.x - 17.0 - (GOAL_METER_WIDTH + GOAL_COUNT_WIDTH + 8.0 if multi else 2.0)
+	_draw_fitted(row, font, Vector2(17, baseline), goal["title"], title_width, GOAL_FONT_SIZE, color)
 	if multi:
+		# A small rounded bar with the count beside it: "3/5".
 		var count: String = "%d/%d" % [goal["progress"], goal["target"]]
-		row.draw_string(font, Vector2(row.size.x - 34, baseline), count, HORIZONTAL_ALIGNMENT_RIGHT, 34, GOAL_FONT_SIZE - 1, TEAL)
-		# A thin progress bar under the count.
-		var track: Rect2 = Rect2(row.size.x - 30, middle + 6, 30, 2)
+		row.draw_string(font, Vector2(row.size.x - GOAL_COUNT_WIDTH, baseline), count, HORIZONTAL_ALIGNMENT_RIGHT,
+				GOAL_COUNT_WIDTH, GOAL_FONT_SIZE - 1, INK_SOFT if status == "done" else TEAL)
+		var track: Rect2 = Rect2(row.size.x - GOAL_COUNT_WIDTH - GOAL_METER_WIDTH - 4.0, middle - 2.5, GOAL_METER_WIDTH, 6.0)
 		var share: float = clampf(float(goal["progress"]) / float(goal["target"]), 0.0, 1.0)
-		row.draw_rect(track, PAPER_DARK)
-		row.draw_rect(Rect2(track.position, Vector2(track.size.x * share, track.size.y)), MUSTARD if status == "done" else TEAL)
+		row.draw_style_box(_goal_track, track)
+		if share > 0.0:
+			var filled: Rect2 = Rect2(track.position, Vector2(maxf(track.size.x * share, track.size.y), track.size.y))
+			row.draw_style_box(_goal_fill_done if status == "done" else _goal_fill, filled)
 	if shine >= 0.0 and shine < 1.0:
 		# A bright band sweeps across the row, and a small star by the box.
 		var x: float = lerpf(-30.0, row.size.x + 30.0, shine)
@@ -1002,6 +1251,7 @@ func _button(text: String, on_press: Callable) -> Button:
 	var button: Button = Button.new()
 	button.text = text
 	button.focus_mode = Control.FOCUS_NONE
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.pressed.connect(on_press)
 	return button
 
@@ -1012,6 +1262,7 @@ func _toggle(text: String, on_change: Callable) -> Button:
 	button.toggle_mode = true
 	button.button_pressed = true
 	button.focus_mode = Control.FOCUS_NONE
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.toggled.connect(on_change)
 	return button
 
@@ -1079,6 +1330,7 @@ func refresh(selected_id: String, speed_index: int, music_on: bool, sound_on: bo
 		_sky.queue_redraw()
 	for index: int in _speed_buttons.size():
 		_speed_buttons[index].set_pressed_no_signal(index == speed_index)
+	_refresh_speed(speed_index)
 	_show_paused(speed_index == 0)
 	_music_button.set_pressed_no_signal(music_on)
 	_music_button.text = "Music on" if music_on else "Music off"
@@ -1092,6 +1344,7 @@ func refresh(selected_id: String, speed_index: int, music_on: bool, sound_on: bo
 	_refresh_neighbors(selected_id)
 	_refresh_talk_buttons(selected_id)
 	_refresh_neighbor_hover()
+	_fit_neighbor_list()
 	_refresh_feed()
 	_refresh_goal_shine()
 
@@ -1242,6 +1495,20 @@ func _draw_ledger() -> void:
 	]
 	var net: int = _week_summary["net_cents"]
 	_ledger.draw_string(font, Vector2(0, 10), "THIS WEEK", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, INK_SOFT)
+	var any_money: bool = false
+	for row: Array in rows:
+		any_money = any_money or int(row[1]) != 0
+	if not any_money and net == 0:
+		# Nothing yet: a quiet note in a dashed box rather than three empty bars.
+		var box: Rect2 = Rect2(0, 17, w, _ledger.size.y - 19)
+		var dash: Color = Color(INK_SOFT, 0.45)
+		_ledger.draw_dashed_line(box.position, Vector2(box.end.x, box.position.y), dash, 1.0, 4.0)
+		_ledger.draw_dashed_line(Vector2(box.position.x, box.end.y), box.end, dash, 1.0, 4.0)
+		_ledger.draw_dashed_line(box.position, Vector2(box.position.x, box.end.y), dash, 1.0, 4.0)
+		_ledger.draw_dashed_line(Vector2(box.end.x, box.position.y), box.end, dash, 1.0, 4.0)
+		_ledger.draw_string(font, Vector2(0, box.get_center().y + 4), "No money in or out yet this week",
+				HORIZONTAL_ALIGNMENT_CENTER, w, 12, INK_SOFT)
+		return
 	_ledger.draw_string(font, Vector2(w - 160, 10), "%s %s so far" % ["up" if net >= 0 else "down", Describe.money(absi(net))],
 			HORIZONTAL_ALIGNMENT_RIGHT, 160, 11, LEAF.darkened(0.2) if net >= 0 else CHERRY)
 	var largest: int = 1
@@ -1287,7 +1554,7 @@ func _refresh_feed() -> void:
 			]
 			var plain: String = "%s   %s" % [Describe.event_time(event), Describe.event(simulation, event)]
 			var clipped: bool = get_theme_default_font().get_string_size(plain, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x > row.size.x - 34.0
-			row.tooltip_text = plain if clipped else ""
+			row.tooltip_text = (plain + "\n\n" if clipped else "") + "Click to see where this happened on the street"
 		var age: int = now - int(_first_shown[event["id"]])
 		var t: float = clampf(float(age) / float(FEED_SLIDE_MS), 0.0, 1.0)
 		var ease_in: float = 1.0 - pow(1.0 - t, 3.0)

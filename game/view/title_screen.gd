@@ -7,6 +7,7 @@ extends Control
 signal new_game_requested
 signal continue_requested
 signal settings_requested
+signal help_requested
 signal quit_requested
 
 const Hud := preload("res://view/hud.gd")
@@ -186,7 +187,7 @@ func _build_ui() -> void:
 	subtitle.add_theme_constant_override("shadow_offset_x", 1)
 	subtitle.add_theme_constant_override("shadow_offset_y", 2)
 	_column.add_child(subtitle)
-	_column.add_child(_gap(42))
+	_column.add_child(_gap(34))
 
 	var new_game: Button = _menu_button("New game", func() -> void: new_game_requested.emit())
 	new_game.tooltip_text = "Start a fresh week with the household"
@@ -201,7 +202,13 @@ func _build_ui() -> void:
 	_continue_note.visible = false
 	_column.add_child(_spaced(_continue_note, 3, 0))
 	_column.add_child(_gap(12))
-	_column.add_child(_menu_button("Settings", func() -> void: settings_requested.emit()))
+	var settings: Button = _menu_button("Settings", func() -> void: settings_requested.emit())
+	settings.tooltip_text = "Music and sound volume, full screen, and tips"
+	_column.add_child(settings)
+	_column.add_child(_gap(12))
+	var help: Button = _menu_button("How to play", func() -> void: help_requested.emit())
+	help.tooltip_text = "Controls, what the panels mean, and the week's goals  (H or F1)"
+	_column.add_child(help)
 	_column.add_child(_gap(12))
 	_column.add_child(_menu_button("Quit", func() -> void: quit_requested.emit()))
 	_message = Label.new()
@@ -225,7 +232,7 @@ func _build_ui() -> void:
 	note.add_child(note_text)
 
 	var build: Label = Label.new()
-	build.text = "%s  ·  F11 full screen" % BUILD_LINE
+	build.text = "%s  ·  H help  ·  F11 full screen" % BUILD_LINE
 	build.add_theme_font_size_override("font_size", 12)
 	build.add_theme_color_override("font_color", Color(PAPER, 0.7))
 	build.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -244,6 +251,7 @@ func _menu_button(text: String, on_press: Callable) -> Button:
 	button.custom_minimum_size = Vector2(270, 50)
 	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	button.focus_mode = Control.FOCUS_NONE
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.pressed.connect(on_press)
 	_buttons.append(button)
 	return button

@@ -1,6 +1,6 @@
 # Handoff
 
-Last updated: 2026-11-15, by Claude (Opus 5.5), after the fourth M1-P round.
+Last updated: 2026-11-15, by Claude (Opus 5.5), after the fifth M1-P round.
 
 This file says what is in progress and what is next. Settled matters are in [DECISIONS.md](../DECISIONS.md) and [ROADMAP.md](ROADMAP.md) and are not repeated here. Read `DECISIONS.md` first, then this.
 
@@ -57,9 +57,20 @@ Three subagents on Fable 5.2. The map agent stopped on a usage limit before repo
 - **Sound:** synthesized interface sounds (click, hover on title buttons, sheet open/close, order, doors, goal flourish, payday bell) and a calmer evening music piece that crossfades with the waltz by the game clock; the title plays the evening piece.
 - **Title:** parallax, twinkling stars, windows lighting on and off, fade-in, "M1-P preview build" line. Window title "The Neighborhood (working title)", minimum size 960×540.
 
+### Fifth round (on Opus; two subagents, interrupted once by Derek and resumed from their partial work)
+
+- **Performance:** the map is drawn in layers that redraw only when needed (see `ARCHITECTURE.md`). Measured under xvfb, average draw time with a still camera went from about 5–9 ms to 1.4–3.3 ms; panning costs about the same as before (~7 ms).
+- **Labels stay inside the map:** bubbles, pills, the hover card and the order flag are nudged inward; bubble stacks near the top flip below the figure.
+- **Small touches:** petals drifting from blossoming trees; moths round lit lamps at night.
+- **Finding things:** clicking a feed line, a neighbor's name or an already-selected household tab pans the camera there with a brief ring (`focus_ring.gd`, `world_view.focus_on_person/focus_on_building`).
+- **Help:** H or F1, a Help button in the top bar, the menu and the title screen open "How to play" (`help_sheet.gd`).
+- **F12** saves a picture to `user://screenshots/` (blocked in self-check and screenshot runs; never exercised for real).
+- **Speed gauge** beside the speed buttons; clock shimmer at 1 hour/s; pause menu opens with the week so far.
+- **HUD edges:** goal progress bars, neighbors list ends on a whole row, empty ledger reads "No money in or out yet this week", long text ellipsizes with a tooltip.
+
 ## 3. Test status
 
-Run in the cloud on Linux, Godot 4.7.2 stable, after the fourth round (also: a normal launch through the title screen for 600 frames, no script errors):
+Run in the cloud on Linux, Godot 4.7.2 stable, after the fifth round (also: a normal launch through the title screen for 600 frames, no script errors):
 
 | Command | Result |
 |---|---|
