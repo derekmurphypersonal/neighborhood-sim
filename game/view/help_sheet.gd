@@ -8,6 +8,7 @@ extends Control
 signal closed
 
 const Hud := preload("res://view/hud.gd")
+const TextSize := preload("res://view/text_size.gd")
 
 const PAPER: Color = Color("#F3E9D2")
 const PAPER_DARK: Color = Color("#E4D3AE")
@@ -24,6 +25,9 @@ const KEY_FONT_SIZE: int = 12
 const TEXT_FONT_SIZE: int = 13
 const LEFT_WIDTH: float = 360.0
 const NOTE_WIDTH: float = 380.0
+## With Large text the card and its wrapped text are this much wider, so it
+## still fits the screen's height.
+const LARGE_WIDEN: float = 1.25
 
 ## Each row: the keys (shown as key caps) and what they do.
 const KEYS: Array[Array] = [
@@ -35,6 +39,8 @@ const KEYS: Array[Array] = [
 	[["Drag", "Arrows"], "Look around the street (also W A S D)"],
 	[["R"], "Put the view back"],
 	[["F"], "Follow the selected person"],
+	[["Tab", "Shift+Tab"], "Next or previous family member"],
+	[["L"], "Labels on the street: everyone, household, on hover"],
 	[["Esc"], "Menu: save, load, settings"],
 	[["H", "F1"], "This help"],
 	[["M", "N"], "Music, and the other sounds, on or off"],
@@ -53,6 +59,11 @@ const PANELS: Array[Array] = [
 var _card: PanelContainer
 var _tween: Tween
 var _open: bool = false
+var _large_text: bool = false
+var _wrapped: Array[Label] = []
+var _left: VBoxContainer
+var _keys: GridContainer
+var _column: VBoxContainer
 
 
 func _ready() -> void:
@@ -72,6 +83,7 @@ func _ready() -> void:
 	var column: VBoxContainer = VBoxContainer.new()
 	column.add_theme_constant_override("separation", 8)
 	_card.add_child(column)
+	_column = column
 
 	var head: HBoxContainer = HBoxContainer.new()
 	column.add_child(head)
@@ -100,6 +112,7 @@ func _ready() -> void:
 	column.add_child(halves)
 	var left: VBoxContainer = VBoxContainer.new()
 	left.custom_minimum_size = Vector2(LEFT_WIDTH, 0)
+	_left = left
 	left.add_theme_constant_override("separation", 6)
 	halves.add_child(left)
 	left.add_child(_section("The week"))
@@ -120,6 +133,7 @@ func _ready() -> void:
 	keys.columns = 2
 	keys.add_theme_constant_override("h_separation", 10)
 	keys.add_theme_constant_override("v_separation", 3)
+	_keys = keys
 	right.add_child(keys)
 	for row: Array in KEYS:
 		var caps: HBoxContainer = HBoxContainer.new()
@@ -179,6 +193,8 @@ func _text(text: String, width: float = LEFT_WIDTH) -> Label:
 	var label: Label = Label.new()
 	label.text = text
 	label.custom_minimum_size = Vector2(width, 0)
+	label.set_meta("normal_width", width)
+	_wrapped.append(label)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_font_size_override("font_size", TEXT_FONT_SIZE)
 	label.add_theme_color_override("font_color", PAPER)
@@ -204,6 +220,9 @@ func _key_cap(text: String) -> PanelContainer:
 	var label: Label = Label.new()
 	label.text = text
 	label.add_theme_font_size_override("font_size", KEY_FONT_SIZE)
+	# Key caps stay small with Large text, so the list of keys fits.
+	label.set_meta(TextSize.FIXED_META, true)
+	label.set_meta("normal_font_size", KEY_FONT_SIZE)
 	label.add_theme_color_override("font_color", INK)
 	cap.add_child(label)
 	return cap
@@ -245,14 +264,47 @@ func open() -> void:
 	visible = true
 	if _tween != null:
 		_tween.kill()
-	_card.reset_size()
-	_card.position = ((SCREEN - _card.size) / 2.0).round()
-	_card.pivot_offset = _card.size / 2.0
+	_place_card()
 	modulate.a = 0.0
 	_card.scale = Vector2(0.94, 0.94)
 	_tween = create_tween().set_parallel(true)
 	_tween.tween_property(self, "modulate:a", 1.0, OPEN_SECONDS)
 	_tween.tween_property(_card, "scale", Vector2.ONE, OPEN_SECONDS).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_settle()
+
+
+## Wrapped text takes its height only once laid out at its width, so the
+## card is sized and centred again a frame after it opens.
+func _settle() -> void:
+	await get_tree().process_frame
+	if _open:
+		_place_card()
+
+
+## Centres the card at its natural size.
+func _place_card() -> void:
+	_card.reset_size()
+	_card.size = _card.get_combined_minimum_size()
+	_card.position = ((SCREEN - _card.size) / 2.0).round()
+	_card.pivot_offset = _card.size / 2.0
+
+
+## Larger text, to match the setting.
+func set_large_text(large: bool) -> void:
+	if large == _large_text:
+		return
+	_large_text = large
+	TextSize.scale_overrides(_card, TextSize.factor(large))
+	var widen: float = LARGE_WIDEN if large else 1.0
+	_card.custom_minimum_size.x = roundf(CARD_WIDTH * widen)
+	_left.custom_minimum_size.x = roundf(LEFT_WIDTH * widen)
+	for label: Label in _wrapped:
+		label.custom_minimum_size.x = roundf(float(label.get_meta("normal_width")) * widen)
+	# Rows a little closer together, so the taller text still fits the screen.
+	_keys.add_theme_constant_override("v_separation", 0 if large else 3)
+	_column.add_theme_constant_override("separation", 5 if large else 8)
+	if _open:
+		_place_card()
 
 
 func close() -> void:

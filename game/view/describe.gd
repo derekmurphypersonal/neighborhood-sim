@@ -72,9 +72,20 @@ static func event(sim: RefCounted, entry: Dictionary) -> String:
 
 
 ## The same sentence as event(), in BBCode for the feed: names of the
-## player's household (player_ids) in bold teal, regard changes green or red.
-static func event_rich(sim: RefCounted, entry: Dictionary, player_ids: Array) -> String:
-	return _event(sim, entry, player_ids, true)
+## player's household (player_ids) in bold teal, regard changes green or red
+## with a bold sign, so they read without the colour too. With chevrons, each
+## change is preceded by CHEVRON_UP or CHEVRON_DOWN (outside any tag), for the
+## caller to replace with a small drawn arrow.
+static func event_rich(sim: RefCounted, entry: Dictionary, player_ids: Array, chevrons: bool = false) -> String:
+	var text: String = _event(sim, entry, player_ids, true)
+	if not chevrons:
+		text = text.replace(CHEVRON_UP, "").replace(CHEVRON_DOWN, "")
+	return text
+
+
+## Markers in event_rich's text where a regard change went up or down.
+const CHEVRON_UP: String = "\u0001"
+const CHEVRON_DOWN: String = "\u0002"
 
 
 const RICH_TEAL: String = "#2F5D62"
@@ -101,7 +112,10 @@ static func _change(amount: int, rich: bool) -> String:
 	if not rich:
 		return "%+d" % amount
 	var color: String = RICH_GOOD if amount > 0 else (RICH_BAD if amount < 0 else RICH_EVEN)
-	return "[color=%s]%+d[/color]" % [color, amount]
+	# A true minus sign, as wide as the plus, and both in bold.
+	var sign: String = "+" if amount > 0 else ("\u2212" if amount < 0 else "\u00b1")
+	var mark: String = CHEVRON_UP if amount > 0 else (CHEVRON_DOWN if amount < 0 else "")
+	return "%s[color=%s][b]%s%d[/b][/color]" % [mark, color, sign, absi(amount)]
 
 
 static func _event(sim: RefCounted, entry: Dictionary, players: Array, rich: bool) -> String:

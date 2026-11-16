@@ -71,7 +71,16 @@ const DEFAULT_SETTINGS: Dictionary = {
 	"music_volume": 1.0, "sound_volume": 1.0, "fullscreen": false, "music_on": true, "sound_on": true,
 	# First-time tips: whether to show them, and the ones already shown (comma-separated IDs from view/tips.gd).
 	"show_tips": true, "tips_seen": "",
+	# Display: street labels (world_view's LABELS_ values), the mini-map, and Large text.
+	"label_mode": 0, "minimap": true, "large_text": false,
+	# Stop the clock while the window is in the background.
+	"pause_in_background": true,
 }
+## What L says as it moves through the street label settings.
+const LABEL_MODE_NAMES: Array[String] = ["Labels: everyone", "Labels: your household", "Labels: only on hover"]
+## The end of the first week: a line over the week's paper inviting the
+## player to keep going.
+const FIRST_WEEK_LEAD: String = "The street carries on. A new week begins Monday."
 const MUSIC_BUS: String = "Music"
 const SOUNDS_BUS: String = "Sounds"
 const WINDOW_TITLE: String = "The Neighborhood (working title)"
@@ -104,6 +113,8 @@ var _screenshot_path: String = ""
 var _screenshot_minutes: int = 0
 var _screenshot_sheet: String = ""
 var _screenshot_zoom: float = 1.0
+## The feed filter to show in a screenshot ("--feed money"); "" for All.
+var _screenshot_feed: String = ""
 var _music: AudioStreamPlayer
 var _music_evening: AudioStreamPlayer
 ## How much of the evening piece is heard now, 0 to 1. Starts at 1: the title
@@ -149,6 +160,12 @@ var _speed_before_help: int = -1
 var _last_focus: Array = []
 ## True while a fade between the title and the game is running.
 var _busy: bool = false
+## The speed to go back to when the window comes back from the background
+## (-1: the clock was not stopped for that).
+var _speed_before_background: int = -1
+## Whether the end-of-week paper has been shown in this run (the first one
+## carries an invitation to keep going).
+var _week_paper_seen: bool = false
 
 
 func _ready() -> void:
@@ -160,10 +177,15 @@ func _ready() -> void:
 			_screenshot_sheet = args[i + 1]
 		if args[i] == "--zoom" and args[i + 1].is_valid_float():
 			_screenshot_zoom = args[i + 1].to_float()
+		if args[i] == "--feed":
+			_screenshot_feed = args[i + 1]
 		if args[i] == "--minutes" and args[i + 1].is_valid_int():
 			_screenshot_minutes = args[i + 1].to_int()
 	_checking = args.has("--self-check")
 	var trial: bool = _checking or _screenshot_path != ""
+	# Screenshots in Large text; never saved (trial runs write no settings).
+	if args.has("--large-text"):
+		_settings["large_text"] = true
 
 	get_window().title = WINDOW_TITLE
 	get_window().min_size = MIN_WINDOW_SIZE
@@ -174,11 +196,13 @@ func _ready() -> void:
 	_fx = ScreenFx.new()
 	_layer.add_child(_fx)
 	_build_front_layers()
+	_apply_text_size()
 	# The self-check and screenshots neither read nor write the player's
 	# settings, so they behave the same on every computer.
 	if not trial:
 		_load_settings()
 		_apply_window_settings()
+		_apply_text_size()
 
 	if _screenshot_path != "":
 		if _screenshot_sheet == "title":
@@ -262,7 +286,7 @@ func _process(delta: float) -> void:
 		_watch(true)
 		var week_now: int = WeekSummary.week_start(simulation.clock.day_index)
 		if week_now != _week_start:
-			_show_week(_week_start, "The week that was")
+			_show_week(_week_start, "The week that was", true)
 			_week_start = week_now
 		if simulation.clock.day_index != _banner_day:
 			_banner_day = simulation.clock.day_index
@@ -314,6 +338,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_set_music(not music_on)
 		KEY_N:
 			_set_sound(not sound_on)
+		KEY_TAB:
+			_cycle_member(-1 if (event as InputEventKey).shift_pressed else 1)
+		KEY_L:
+			_cycle_labels()
 		KEY_ESCAPE:
 			if hud.sheet_is_open():
 				hud.close_sheet()
@@ -331,6 +359,7 @@ func _show_simulation(shown: Simulation) -> void:
 	selected_id = simulation.state.households[simulation.state.player_household_id()]["member_ids"][0]
 	_pending_minutes = 0.0
 	_speed_before_sheet = -1
+	_speed_before_background = -1
 	_last_activity.clear()
 	_last_at.clear()
 	_last_funds.clear()
@@ -366,6 +395,7 @@ func _show_simulation(shown: Simulation) -> void:
 	hud.focus_requested.connect(_focus)
 	hud.sheet_closed.connect(_on_sheet_closed)
 	_layer.add_child(hud)
+	_apply_view_settings()
 	hud.tips.tip_shown.connect(_on_tip_shown)
 	_setup_tips()
 	_watch(false)
@@ -379,7 +409,7 @@ func _show_menu(note: String = "") -> void:
 		"The game is paused.", "",
 		"[b]Save game[/b] keeps the game exactly as it is now, in one saved game that is replaced each time.",
 		"[b]Load game[/b] goes back to the saved game. Anything since then is lost.",
-		"[b]Settings[/b] sets the music and sound volume, and full screen.",
+		"[b]Settings[/b] sets the sound, full screen, text size, street labels and more.",
 		"[b]How to play[/b] shows the controls and what the panels mean.",
 		"[b]Main menu[/b] leaves this game for the title screen.", "",
 	]
@@ -401,7 +431,7 @@ func _show_menu(note: String = "") -> void:
 	_open_sheet("Menu", "\n".join(lines), [
 		["Save game", _save_game, "Keep the game as it is now, replacing the last saved game"],
 		["Load game", _load_game, "Go back to the saved game; anything since then is lost"],
-		["Settings", _open_settings, "Music and sound volume, full screen, and tips"],
+		["Settings", _open_settings, "Sound, display (text size, street labels, mini-map) and play"],
 		["How to play", _open_help, "Controls, panels and goals  (H or F1)"],
 		["Main menu", _confirm_main_menu, "Leave this game for the title screen"],
 	], "Resume")
@@ -707,7 +737,82 @@ func _on_settings_changed(changed: Dictionary) -> void:
 		if _settings["show_tips"]:
 			_settings["tips_seen"] = ""  # switching tips back on shows them all again
 		_setup_tips()
+	for key: String in ["label_mode", "minimap", "large_text", "pause_in_background"]:
+		if changed.has(key):
+			_settings[key] = changed[key]
+	_apply_view_settings()
 	_save_settings()
+
+
+## Applies the display settings to the street in a game: the labels and the
+## mini-map.
+func _apply_view_settings() -> void:
+	_apply_text_size()
+	if world_view == null:
+		return
+	world_view.label_mode = int(_settings["label_mode"])
+	world_view.minimap_visible = bool(_settings["minimap"])
+
+
+## Normal or Large text for the panels and every sheet.
+func _apply_text_size() -> void:
+	var large: bool = bool(_settings["large_text"])
+	if hud != null:
+		hud.set_large_text(large)
+	_settings_sheet.set_large_text(large)
+	_help_sheet.set_large_text(large)
+
+
+## Tab and Shift+Tab: the next or previous member of the player's household,
+## and the camera goes to them.
+func _cycle_member(step: int) -> void:
+	var members: Array = simulation.state.households[simulation.state.player_household_id()]["member_ids"]
+	if members.is_empty():
+		return
+	var at: int = members.find(selected_id)
+	var next: int = posmod(at + step, members.size())
+	if at < 0:
+		next = 0 if step > 0 else members.size() - 1
+	_select(members[next])
+	_focus("person", members[next])
+
+
+## L: everyone, your household, only on hover, and round again; kept as a setting.
+func _cycle_labels() -> void:
+	var mode: int = posmod(int(_settings["label_mode"]) + 1, LABEL_MODE_NAMES.size())
+	_settings["label_mode"] = mode
+	_apply_view_settings()
+	_settings_sheet.show_label_mode(mode)
+	world_view.add_toast(LABEL_MODE_NAMES[mode])
+	_save_settings()
+
+
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_APPLICATION_FOCUS_OUT and what != NOTIFICATION_APPLICATION_FOCUS_IN:
+		return
+	# The self-check and screenshots run the same whatever the window does.
+	if _checking or _screenshot_path != "":
+		return
+	_on_background(what == NOTIFICATION_APPLICATION_FOCUS_OUT)
+
+
+## With "Pause in the background" on, the clock stops when the window goes
+## into the background and, if it was running then, starts again on return
+## (unless a sheet was opened meanwhile, which keeps its own pause).
+func _on_background(away: bool) -> void:
+	if away:
+		if world_view == null or not bool(_settings["pause_in_background"]) or speed_index == 0 or _speed_before_background >= 0:
+			return
+		_speed_before_background = speed_index
+		speed_index = 0
+		_pending_minutes = 0.0
+		world_view.add_toast("Paused while the window is in the background")
+		return
+	if _speed_before_background < 0:
+		return
+	if world_view != null and speed_index == 0 and not hud.sheet_is_open() and not _help_sheet.is_open() and not _settings_sheet.is_open():
+		speed_index = _speed_before_background
+	_speed_before_background = -1
 
 
 func _set_fullscreen(on: bool) -> void:
@@ -735,6 +840,7 @@ func _load_settings() -> void:
 			_settings[key] = value
 	_settings["music_volume"] = clampf(_settings["music_volume"], 0.0, 1.0)
 	_settings["sound_volume"] = clampf(_settings["sound_volume"], 0.0, 1.0)
+	_settings["label_mode"] = clampi(_settings["label_mode"], 0, LABEL_MODE_NAMES.size() - 1)
 	music_on = _settings["music_on"]
 	sound_on = _settings["sound_on"]
 
@@ -785,12 +891,18 @@ func _on_tip_shown(_tip_id: String) -> void:
 
 
 ## The player's household's week, made from the event log.
-func _show_week(first_day: int, title: String) -> void:
+## At the end of a week (end_of_week true) the first paper of the run also
+## carries a line inviting the player to keep going.
+func _show_week(first_day: int, title: String, end_of_week: bool = false) -> void:
+	var lead: String = ""
+	if end_of_week and not _week_paper_seen:
+		_week_paper_seen = true
+		lead = FIRST_WEEK_LEAD
 	var household_id: String = simulation.state.player_household_id()
 	var summary: Dictionary = WeekSummary.summarize(simulation.state, household_id, first_day, first_day + 6)
 	var goals: Array = WeekGoals.evaluate(simulation.state, household_id, first_day, first_day + 6, simulation.clock.day_index)
 	_open_sheet("%s: the %s" % [title, simulation.state.households[household_id]["name"]], Describe.week_summary(simulation, summary, goals),
-			[], "Continue", hud.week_paper(summary, goals))
+			[], "Continue", hud.week_paper(summary, goals, lead))
 	_tip("week")
 
 
@@ -1286,6 +1398,82 @@ func _check_help_and_focus(problems: Array[String]) -> void:
 		problems.append("F12 saved a picture during the self-check")
 	else:
 		print("SELF-CHECK  F12 saved no picture during the check")
+	_check_keys_and_background(problems)
+	_check_feed(problems)
+
+
+## Part of the self-check: each feed filter shows only its kind of news, and
+## a folded group opens on a click and closes again.
+func _check_feed(problems: Array[String]) -> void:
+	hud.set_feed_filter("neighbors")
+	var kinds: Array[String] = hud.feed_line_kinds()
+	var more: int = kinds.find("more")
+	if more < 0:
+		print("SELF-CHECK  no folded lines in the Neighbors feed to open (nothing to check)")
+	else:
+		hud.click_feed_line(more)
+		var opened: Array[String] = hud.feed_line_kinds()
+		if opened.size() > more and opened[more] == "more":
+			problems.append("clicking a folded feed line did not open it")
+		else:
+			var less: int = opened.find("less")
+			if less >= 0:
+				hud.click_feed_line(less)
+			print("SELF-CHECK  the Neighbors feed folded similar talks, and a click opened them")
+	for filter_id: String in ["money", "household"]:
+		hud.set_feed_filter(filter_id)
+		hud.feed_line_kinds()
+	hud.set_feed_filter("all")
+
+
+## Part of the self-check: Tab and Shift+Tab move through the household and
+## find them on the street, L moves through the street label settings, and the
+## clock stops in the background and carries on after. Keys go through the
+## viewport, as a player's would.
+func _check_keys_and_background(problems: Array[String]) -> void:
+	var first: String = selected_id
+	_press_key(KEY_TAB, false)
+	var after_tab: String = selected_id
+	_press_key(KEY_TAB, true)
+	if after_tab == first or not _is_players(after_tab) or selected_id != first:
+		problems.append("Tab and Shift+Tab did not move through the household and back")
+	elif _last_focus != ["person", first]:
+		problems.append("Tab did not find the selected person on the street")
+	else:
+		print("SELF-CHECK  Tab went from %s to %s and Shift+Tab back" % [Describe.given_name(simulation, first), Describe.given_name(simulation, after_tab)])
+	var modes: Array[int] = []
+	for press: int in LABEL_MODE_NAMES.size():
+		_press_key(KEY_L, false)
+		modes.append(world_view.label_mode)
+	if modes != [WorldView.LABELS_HOUSEHOLD, WorldView.LABELS_NONE, WorldView.LABELS_ALL]:
+		problems.append("L gave the label settings %s" % str(modes))
+	else:
+		print("SELF-CHECK  L moved the street labels through household, hover only and everyone")
+	speed_index = 2
+	_on_background(true)
+	var paused: bool = speed_index == 0
+	_on_background(false)
+	_settings["pause_in_background"] = false
+	_on_background(true)
+	var kept_on: bool = speed_index == 2
+	_on_background(false)
+	_settings["pause_in_background"] = true
+	if not paused or speed_index != 2 or not kept_on:
+		problems.append("pausing in the background did not stop and restart the clock as set")
+	else:
+		print("SELF-CHECK  the clock stopped in the background and carried on at the same speed")
+	speed_index = 1
+
+
+func _press_key(key: Key, shift: bool) -> void:
+	var press: InputEventKey = InputEventKey.new()
+	press.keycode = key
+	press.shift_pressed = shift
+	press.pressed = true
+	get_viewport().push_input(press)
+	var release: InputEventKey = press.duplicate() as InputEventKey
+	release.pressed = false
+	get_viewport().push_input(release)
 
 
 ## Part of the self-check: the settings sheet changes the volume live, the
@@ -1306,6 +1494,20 @@ func _check_front_screens(problems: Array[String]) -> void:
 		problems.append("the sounds are not routed through the Music and Sounds buses")
 	else:
 		print("SELF-CHECK  settings sheet opened; music volume 40%% is %.1f dB on the Music bus" % AudioServer.get_bus_volume_db(bus))
+	_settings_sheet.choose_label_mode(WorldView.LABELS_HOUSEHOLD)
+	_settings_sheet.choose_large_text(true)
+	_settings_sheet.set_minimap(false)
+	var labels_set: bool = world_view.label_mode == WorldView.LABELS_HOUSEHOLD
+	var large_set: bool = hud.is_large_text() and not world_view.minimap_visible
+	_settings_sheet.choose_label_mode(WorldView.LABELS_ALL)
+	_settings_sheet.choose_large_text(false)
+	_settings_sheet.set_minimap(true)
+	if not labels_set or not large_set:
+		problems.append("the settings sheet did not reach the street labels, the text size or the mini-map")
+	elif world_view.label_mode != WorldView.LABELS_ALL or hud.is_large_text() or not world_view.minimap_visible:
+		problems.append("the street labels, the text size or the mini-map did not go back")
+	else:
+		print("SELF-CHECK  settings switched the street labels, Large text and the mini-map, and back")
 	_settings_sheet.close()
 	if not hud.sheet_is_open():
 		problems.append("closing the settings sheet also closed the menu under it")
@@ -1349,7 +1551,7 @@ func _show_for_screenshot() -> void:
 		"menu":
 			_show_menu()
 		"week":
-			_show_week(WeekSummary.week_start(simulation.clock.day_index - 1), "The week that was")
+			_show_week(WeekSummary.week_start(simulation.clock.day_index - 1), "The week that was", true)
 		"welcome":
 			_show_welcome()
 		"settings":
@@ -1383,7 +1585,8 @@ func _show_welcome() -> void:
 		"  [b]Space[/b] pause      [b]1 2 3[/b] speed      [b]Esc[/b] menu and settings",
 		"  [b]M[/b] music on or off      [b]N[/b] sounds on or off      [b]F11[/b] full screen",
 		"  [b]Scroll[/b] zoom      [b]Drag[/b] or [b]arrows[/b] look around      [b]R[/b] reset the view",
-		"  [b]F[/b] follow the selected person      [b]H[/b] how to play      [b]F12[/b] save a picture",
+		"  [b]F[/b] follow the selected person      [b]Tab[/b] next family member      [b]L[/b] street labels",
+		"  [b]H[/b] how to play      [b]F12[/b] save a picture",
 		"",
 		"Click a line in [i]What has happened[/i] to see where it happened.",
 	]
@@ -1410,8 +1613,15 @@ func _take_screenshot() -> void:
 	world_view.set_zoom(_screenshot_zoom)
 	world_view.queue_redraw()
 	hud.refresh(selected_id, speed_index, music_on, sound_on)
+	if _screenshot_feed != "":
+		hud.set_feed_filter(_screenshot_feed)
 	_show_for_screenshot()
 	await get_tree().create_timer(0.6).timeout  # let bubbles finish popping
+	# A few frames of the panel's own refresh, as in play, so lists that fit
+	# themselves to their room once laid out have done so.
+	for frame: int in 4:
+		hud.refresh(selected_id, speed_index, music_on, sound_on)
+		await get_tree().process_frame
 	world_view.queue_redraw()
 	hud.refresh(selected_id, speed_index, music_on, sound_on)
 	await RenderingServer.frame_post_draw

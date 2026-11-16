@@ -11,7 +11,7 @@ const HudArt := preload("res://view/hud_art.gd")
 
 ## What each tip says. The keys are the moments main.gd watches for.
 const TIPS: Dictionary = {
-	"select": "Now click a neighbor to talk, a house to visit, or a room in \"Inside your home\". Right-click any building to read about it.",
+	"select": "Now click a neighbor to talk, a house to visit, or a room in \"Inside your home\". Right-click any building to read about it. Tab moves to the next of your family.",
 	"talk": "A conversation changes what two people think of each other. Watch the numbers float up, and the bars in the Neighbors list.",
 	"payday": "Payday! Wages come on Friday for the days worked. Rent is due on Monday, and the pantry needs filling at the store.",
 	"week": "Every Monday the paper sums up the week just gone. \"This week\" in the top bar shows how the week is going at any time.",

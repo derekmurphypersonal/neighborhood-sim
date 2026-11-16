@@ -1,6 +1,6 @@
 # Handoff
 
-Last updated: 2026-11-15, by Claude (Opus 5.5), after the fifth M1-P round.
+Last updated: 2026-11-15, by Claude (Opus 5.5), after the sixth M1-P round.
 
 This file says what is in progress and what is next. Settled matters are in [DECISIONS.md](../DECISIONS.md) and [ROADMAP.md](ROADMAP.md) and are not repeated here. Read `DECISIONS.md` first, then this.
 
@@ -68,9 +68,22 @@ Three subagents on Fable 5.2. The map agent stopped on a usage limit before repo
 - **Speed gauge** beside the speed buttons; clock shimmer at 1 hour/s; pause menu opens with the week so far.
 - **HUD edges:** goal progress bars, neighbors list ends on a whole row, empty ledger reads "No money in or out yet this week", long text ellipsizes with a tooltip.
 
+### Sixth round (on Opus; two subagents, both finished)
+
+- **Mini-map** inset (bottom right of the map) when part of the street is out of view; click or drag it to move the camera.
+- **Street labels** setting and L key: everyone / your household / only on hover.
+- **Morning mist** 05:00–08:00; **double-click** a person to follow them.
+- **Feed filters** (All, Your household, Money, Neighbors) and folding of runs of similar news into one expandable line.
+- **Settings** in sections (Sound, Display, Play): text size Normal/Large (+14%), street labels, mini-map, show tips, pause in the background (on by default).
+- **Tab / Shift+Tab** cycle household members and find them on the street.
+- **Colour-independent cues:** arrows on regard changes in the feed and on the map, direction points on neighbor bars, a warning mark on needs below 30%.
+- The first week's paper opens with "The street carries on. A new week begins Monday."
+
+Known: with a household member selected, the first click of a double-click on a neighbor still orders a talk (as a single click does). Draw time with a still camera stayed at 1.2–3.2 ms average.
+
 ## 3. Test status
 
-Run in the cloud on Linux, Godot 4.7.2 stable, after the fifth round (also: a normal launch through the title screen for 600 frames, no script errors):
+Run in the cloud on Linux, Godot 4.7.2 stable, after the sixth round (also: a normal launch through the title screen for 600 frames, no script errors):
 
 | Command | Result |
 |---|---|

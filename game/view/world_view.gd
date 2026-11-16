@@ -151,6 +151,24 @@ var area: Area
 var selected_id: String = ""
 var minute_fraction: float = 1.0
 
+## How many activity bubbles the map shows. ALL: everyone outdoors.
+## HOUSEHOLD: the player's household and whoever is talking with one of them;
+## anyone else gets a small name tag while the pointer is over them. NONE: only
+## the person under the pointer and the selected person.
+const LABELS_ALL := 0
+const LABELS_HOUSEHOLD := 1
+const LABELS_NONE := 2
+var label_mode: int = LABELS_ALL:
+	set(value):
+		label_mode = clampi(value, LABELS_ALL, LABELS_NONE)
+		queue_redraw()
+## The small overview map in the bottom-right corner of the map. It shows
+## itself only when part of the street is out of view.
+var minimap_visible: bool = true:
+	set(value):
+		minimap_visible = value
+		queue_redraw()
+
 var _scale: float = 0.1
 var _offset: Vector2 = Vector2.ZERO
 var _base_scale: float = 0.1
@@ -188,6 +206,7 @@ var _card_box: StyleBoxFlat
 var _card_head: StyleBoxFlat
 var _pill_box: StyleBoxFlat
 var _home_pill: StyleBoxFlat
+var _mini_box: StyleBoxFlat
 
 # Decoration, worked out once from the area (world inches).
 var _trees: Array = []      # {"x", "y", "size", "shade", "evergreen"}
@@ -211,6 +230,7 @@ var _lot_bounds: Rect2 = Rect2()
 ## "dormer", "bay", "bay_wall", "bay_u", "awning_wall", "flicker"}
 var _styles: Dictionary = {}
 var _patches: Array = []    # {"x", "y", "r", "color"}: soft blotches in the grass
+var _mists: Array = []      # {"x", "y", "r", "stretch", "phase", "speed"}: early-morning mist
 var _stripes: Array = []    # [Vector2 corner, Vector2 opposite corner]: mowing stripes
 var _poles: Array = []      # {"x", "y", "across", "transformer"}
 var _wires: Array = []      # {"a", "b" (world Vector2), "across", "t0", "t1"}: pieces of a span
@@ -292,6 +312,8 @@ var _indices_set: bool = false
 var _reindex_until: int = 0
 ## A white disc in three faint steps, made in code: one soft blotch of grass.
 var _blotch: ImageTexture
+## A soft white disc fading smoothly to nothing at the rim: one patch of mist.
+var _mist_puff: ImageTexture
 var _no_uvs: PackedVector2Array = PackedVector2Array()
 
 ## A cat and a dog, invented like the rest of the decoration. The cat:
@@ -309,13 +331,43 @@ var _spring: bool = false
 var _selected_seen: String = ""
 var _selected_since: int = -100000
 
+## The minimap: a paper card in the map's bottom-right corner. Its picture
+## of the lots, street and buildings is worked out once, in its own pixels.
+const MINIMAP_RECT: Rect2 = Rect2(752, 400, 146, 98)
+const MINIMAP_PAD: float = 7.0
+## Unscaled isometric bounds of the area, and how they map onto the card.
+var _mini_bounds: Rect2 = Rect2()
+var _mini_scale: float = 1.0
+var _mini_origin: Vector2 = Vector2.ZERO
+## [lots, street, buildings] as polygons in screen pixels; buildings as
+## [polygon, kind] with kind 0 house, 1 the player's home candidate, 2 store.
+var _mini_lots: Array[PackedVector2Array] = []
+var _mini_street: Array[PackedVector2Array] = []
+var _mini_buildings: Array = []  # [building_id, polygon]
+## How much of the minimap shows (eases between 0 and 1), and whether the
+## pointer is dragging on it.
+var _mini_alpha: float = 0.0
+var _mini_dragging: bool = false
+## Whether it was last wanted, and when (ms) that last changed: the fade is
+## timed by the clock on the wall, not by frames.
+var _mini_want: bool = false
+var _mini_since: int = -100000
+const MINIMAP_FADE_MS: int = 220
+
 # Follow camera: the view keeps the selected person near the middle of the map.
 var _following: bool = false
+## Who is followed when it is not the selected person: someone double-clicked
+## on the map. Empty: the selected person.
+var _follow_id: String = ""
+## A double-click was pressed; its release is not a second click.
+var _double_pressed: bool = false
 ## A one-off glide of the camera to a person or building (focus_on_*): which
 ## kind ("person"/"building"/""), its ID, and when it gives up.
 var _focus_kind: String = ""
 var _focus_id: String = ""
 var _focus_until: int = 0
+## For a glide to a point (the minimap): the unscaled isometric point.
+var _focus_point: Vector2 = Vector2.ZERO
 
 # Feedback and small animations. All of it is presentation, kept here and
 # worked out by comparing the simulation's state with what was seen last frame.
@@ -359,13 +411,19 @@ func setup(sim: Simulation) -> void:
 	_card_head.corner_radius_bottom_right = 0
 	_pill_box = _box(Color(0.15, 0.13, 0.12, 0.72), Color(0, 0, 0, 0), 0, 8)
 	_home_pill = _box(TEAL, MUSTARD, 2, 8)
+	_mini_box = _box(PAPER, TEAL, 2, 8)
+	_mini_box.shadow_color = Color(0.12, 0.08, 0.05, 0.25)
+	_mini_box.shadow_size = 4
+	_mini_box.shadow_offset = Vector2(0, 2)
 	_sign_box = _box(Color.WHITE, CHERRY, 2, 4)
 	_tag_box = _box(Color.WHITE, Color(1, 1, 1, 0.7), 1, 4)
 	_building_ids = area.sorted_building_ids()
 	_blotch = _make_blotch()
+	_mist_puff = _make_mist_puff()
 	_fit_to_screen()
 	_plan_decoration()
 	_plan_drawing_order()
+	_plan_minimap()
 	_make_layers()
 
 
@@ -461,6 +519,17 @@ func _make_blotch() -> ImageTexture:
 			elif r <= 1.0:
 				alpha = 0.05
 			image.set_pixel(x, y, Color(1, 1, 1, alpha))
+	return ImageTexture.create_from_image(image)
+
+
+func _make_mist_puff() -> ImageTexture:
+	var size: int = 64
+	var image: Image = Image.create(size, size, false, Image.FORMAT_RGBA8)
+	for y: int in size:
+		for x: int in size:
+			var r: float = Vector2(float(x) + 0.5 - float(size) / 2.0, float(y) + 0.5 - float(size) / 2.0).length() / (float(size) / 2.0)
+			var fall: float = clampf(1.0 - r * r, 0.0, 1.0)
+			image.set_pixel(x, y, Color(1, 1, 1, fall * fall))
 	return ImageTexture.create_from_image(image)
 
 
@@ -570,6 +639,7 @@ func _fit_to_screen() -> void:
 	for corner: Vector2 in corners:
 		bounds = bounds.expand(corner)
 	_base_scale = minf(MAP_RECT.size.x / maxf(bounds.size.x, 1.0), MAP_RECT.size.y / maxf(bounds.size.y, 1.0)) * 1.04
+	_mini_bounds = bounds
 	_base_offset = MAP_RECT.get_center() - bounds.get_center() * _base_scale
 	_apply_view()
 
@@ -586,6 +656,7 @@ func _apply_view() -> void:
 ## Starts or stops keeping the selected person in the middle of the map.
 func toggle_follow() -> void:
 	_following = not _following and selected_id != ""
+	_follow_id = ""
 
 
 func is_following() -> bool:
@@ -595,7 +666,20 @@ func is_following() -> bool:
 ## Where the selected person is on screen: their figure outdoors, the door of
 ## the building they are in, or nowhere (Vector2.INF) when off the map.
 func _follow_target() -> Vector2:
-	return _person_screen(selected_id)
+	return _person_screen(_followed_id())
+
+
+func _followed_id() -> String:
+	return _follow_id if _follow_id != "" else selected_id
+
+
+## Starts following a person (double-click on the map).
+func follow_person(person_id: String) -> void:
+	if simulation == null or not simulation.state.people.has(person_id):
+		return
+	_cancel_focus()
+	_following = true
+	_follow_id = "" if person_id == selected_id else person_id
 
 
 func _person_screen(person_id: String) -> Vector2:
@@ -633,7 +717,7 @@ func _ease_toward(target: Vector2, delta: float) -> bool:
 func focus_on_person(person_id: String) -> void:
 	if simulation == null or not simulation.state.people.has(person_id):
 		return
-	if _following and selected_id != person_id:
+	if _following and _followed_id() != person_id:
 		_following = false
 	_start_focus("person", person_id)
 
@@ -663,14 +747,16 @@ func _focus_step(delta: float) -> void:
 		target = _person_screen(_focus_id)
 	elif _focus_kind == "building" and area.buildings.has(_focus_id):
 		target = to_screen(area.buildings[_focus_id]["door"])
+	elif _focus_kind == "point":
+		target = _focus_point * _scale + _offset
 	if not _ease_toward(target, delta) or Time.get_ticks_msec() > _focus_until:
 		_cancel_focus()
 
 
 func _draw_follow_pill() -> void:
-	if not _following or not simulation.state.people.has(selected_id):
+	if not _following or not simulation.state.people.has(_followed_id()):
 		return
-	var person: Dictionary = simulation.state.people[selected_id]
+	var person: Dictionary = simulation.state.people[_followed_id()]
 	var away: bool = person["at"] != Records.AT_OUTSIDE and person["at"] != Records.AT_INSIDE
 	var text: String = "Following %s%s  (F to stop)" % [person["given_name"], ", who is away" if away else ""]
 	var size: Vector2 = _text_size(text, 12) + Vector2(26, 8)
@@ -765,6 +851,18 @@ func _plan_decoration() -> void:
 			"y": patch_rng.randf_range(near.position.y, near.end.y),
 			"r": patch_rng.randf_range(10.0, 30.0) * FOOT,
 			"color": patch_colors[patch_rng.randi_range(0, patch_colors.size() - 1)],
+		})
+	# Low patches of mist over the lawns and the street, for early mornings.
+	var mist_rng: RandomNumberGenerator = _rng_for("morning mist")
+	var misty: Rect2 = _lot_bounds.grow(10.0 * FOOT)
+	for index: int in 30:
+		_mists.append({
+			"x": mist_rng.randf_range(misty.position.x, misty.end.x),
+			"y": mist_rng.randf_range(misty.position.y, misty.end.y),
+			"r": mist_rng.randf_range(16.0, 34.0) * FOOT,
+			"stretch": mist_rng.randf_range(1.3, 2.0),
+			"phase": mist_rng.randf_range(0.0, TAU),
+			"speed": mist_rng.randf_range(0.6, 1.4),
 		})
 	for lot_id: String in area.lots:
 		var lawn: Rect2 = _rect_of(area.lots[lot_id]["boundary"])
@@ -1832,6 +1930,7 @@ func _paint(canvas: CanvasItem, what: int, index: int) -> void:
 		PAINT_TOP:
 			_draw_house_notes()
 			_draw_floats()
+			_draw_minimap()
 			_draw_toasts()
 			_draw_follow_pill()
 	_cv = self
@@ -1863,6 +1962,7 @@ func _paint_under() -> void:
 	_draw_lamp_pools()
 	_draw_glints()
 	_draw_haze()
+	_draw_mist()
 	_draw_order_path()
 	_draw_talk_lines()
 
@@ -3031,6 +3131,42 @@ func _draw_lawn_texture() -> void:
 		_cv.draw_texture_rect(_blotch, Rect2(at.x - radius, at.y - radius * 0.5, radius * 2.0, radius), false, _tint(Color(patch["color"], 1.0)))
 
 
+## How thick the morning mist is: none before 05:00, settling in by 05:30,
+## then thinning as the sun climbs until it is gone at 08:00.
+func _mist_amount() -> float:
+	var minute: float = float(simulation.clock.minute_of_day) + minute_fraction
+	if minute < 300.0 or minute > 480.0:
+		return 0.0
+	if minute < 330.0:
+		return (minute - 300.0) / 30.0
+	if minute < 390.0:
+		return 1.0
+	var t: float = (minute - 390.0) / 90.0
+	return (1.0 - t) * (1.0 - t)
+
+
+## Soft low patches of mist drifting slowly across the lawns and the street.
+## The drift is wall-clock time, presentation only.
+func _draw_mist() -> void:
+	var amount: float = _mist_amount()
+	if amount < 0.01:
+		return
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	var tint: Color = _tint(Color(0.94, 0.96, 0.97))
+	for mist: Dictionary in _mists:
+		var phase: float = mist["phase"]
+		var speed: float = mist["speed"]
+		var drift: float = sin(now * 0.05 * speed + phase) * 9.0 * FOOT
+		var at: Vector2 = _iso(float(mist["x"]) + drift, float(mist["y"]) + drift * 0.4)
+		var radius: float = float(mist["r"]) * _scale * 1.4
+		var width: float = radius * float(mist["stretch"])
+		if at.x < -width or at.x > VIEW_SIZE.x + width or at.y < -radius or at.y > VIEW_SIZE.y + radius:
+			continue
+		var breathe: float = 0.75 + 0.25 * sin(now * 0.17 * speed + phase * 2.0)
+		_cv.draw_texture_rect(_mist_puff, Rect2(at.x - width, at.y - radius * 0.45, width * 2.0, radius * 0.9), false,
+				Color(tint, 0.30 * amount * breathe))
+
+
 ## Lamplight catching the wet-looking street at night: a few faint twinkles.
 func _draw_glints() -> void:
 	if _night < 0.4:
@@ -3710,6 +3846,12 @@ func _draw_bubbles() -> void:
 		if not LABEL_AREA.grow(4.0).has_point(_screen_positions[person_id]):
 			continue
 		var head_top: Vector2 = (_screen_positions[person_id] as Vector2) - Vector2(0, 21.0 * k)
+		var shown: int = _bubble_shown(person_id, person)
+		if shown == 0:
+			continue
+		if shown == 1:
+			_draw_name_tag(head_top, person["given_name"])
+			continue
 		# The bubble sits to the right unless that would cover someone else.
 		var size: Vector2 = _text_size(text, 12) + Vector2(14, 8)
 		var right: Rect2 = Rect2(head_top + Vector2(6, -size.y), size).grow(4.0)
@@ -3745,6 +3887,35 @@ func _draw_bubbles() -> void:
 		placed.append(Rect2(anchor - Vector2(0, size.y), size))
 		var tail: bool = not below and is_equal_approx(anchor.y, natural.y) and absf(anchor.x - natural.x) < size.x - 16.0
 		_draw_bubble(anchor, text, now - since, head_top if tail else Vector2.INF)
+
+
+## Whether a person outdoors gets their bubble under the label mode:
+## 2 the full bubble, 1 a small name tag, 0 nothing.
+func _bubble_shown(person_id: String, person: Dictionary) -> int:
+	var hovered: bool = person_id == _frame_hovered_person
+	if label_mode == LABELS_ALL or person_id == selected_id:
+		return 2
+	if label_mode == LABELS_NONE:
+		return 2 if hovered else 0
+	if _is_players_person(person):
+		return 2
+	var action: Dictionary = person["action"]
+	if not action.is_empty() and action["kind"] == "talk" and simulation.state.people.has(action["other_id"]) \
+			and _is_players_person(simulation.state.people[action["other_id"]]):
+		return 2
+	return 1 if hovered else 0
+
+
+func _is_players_person(person: Dictionary) -> bool:
+	return bool(simulation.state.households[person["household_id"]]["player_controlled"])
+
+
+## A small dark tag with a first name, just over the head.
+func _draw_name_tag(head_top: Vector2, text: String) -> void:
+	var size: Vector2 = _text_size(text, 11) + Vector2(10, 4)
+	var at: Vector2 = _nudge_in(head_top - Vector2(size.x / 2.0, size.y + 4.0), size).round()
+	_cv.draw_style_box(_pill_box, Rect2(at, size))
+	_cv.draw_string(_font, at + Vector2(5, size.y - 5.0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color.WHITE)
 
 
 ## A rounded label with a little tail. A new one pops out and is highlighted
@@ -3785,7 +3956,8 @@ func _person_at(point: Vector2) -> String:
 
 
 func _hovered() -> Dictionary:
-	if _dragging or INTERIOR_RECT.has_point(_hover) or not Rect2(Vector2.ZERO, VIEW_SIZE).has_point(_hover):
+	if _dragging or _mini_dragging or INTERIOR_RECT.has_point(_hover) or _minimap_has(_hover) \
+			or not Rect2(Vector2.ZERO, VIEW_SIZE).has_point(_hover):
 		return {}
 	var person_id: String = _person_at(_hover)
 	if person_id != "":
@@ -3915,10 +4087,33 @@ func _draw_floats() -> void:
 		var alpha: float = 1.0 - progress * progress
 		var text: String = item["text"]
 		var width: float = _text_size(text, 16).x
-		var corner: Vector2 = _nudge_in(at - Vector2(width / 2.0, 16.0), Vector2(width, 20.0)) + Vector2(0, 16.0)
+		# A rise or fall ("+3", "-$1.20") also gets a drawn chevron, so it
+		# reads without telling green from red.
+		var sign: int = _float_sign(text)
+		var mark: float = 13.0 if sign != 0 else 0.0
+		var corner: Vector2 = _nudge_in(at - Vector2((width + mark) / 2.0, 16.0), Vector2(width + mark, 20.0)) + Vector2(mark, 16.0)
+		if sign != 0:
+			_draw_chevron(corner + Vector2(-7.0, -6.0), sign, Color(color, alpha), Color(1, 0.98, 0.92, alpha))
 		_cv.draw_string_outline(_font, corner, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, 5, Color(1, 0.98, 0.92, alpha))
 		_cv.draw_string(_font, corner, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(color, alpha))
 	_floats = kept
+
+
+## 1 for a text that reports a rise ("+3", "+$0.50"), -1 for a fall, 0 otherwise.
+func _float_sign(text: String) -> int:
+	if text.length() < 2 or not (text[1] == "$" or text[1].is_valid_int()):
+		return 0
+	if text[0] == "+":
+		return 1
+	return -1 if text[0] == "-" else 0
+
+
+## A small chevron pointing up (1) or down (-1), with a pale outline.
+func _draw_chevron(centre: Vector2, direction: int, color: Color, edge: Color) -> void:
+	var d: float = float(direction)
+	var points: PackedVector2Array = PackedVector2Array([centre + Vector2(-4.5, 2.5 * d), centre + Vector2(0, -2.5 * d), centre + Vector2(4.5, 2.5 * d)])
+	_cv.draw_polyline(points, edge, 5.0, true)
+	_cv.draw_polyline(points, color, 2.4, true)
 
 
 func _draw_toasts() -> void:
@@ -3937,6 +4132,9 @@ func _draw_toasts() -> void:
 		var slide: float = clampf(float(age) / 220.0, 0.0, 1.0)
 		var top_left: Vector2 = Vector2(MAP_RECT.get_center().x - size.x / 2.0,
 				MAP_RECT.end.y - (row + 1) * (size.y + 6.0) + (1.0 - slide) * 16.0)
+		# Kept to the left of the minimap while it shows.
+		if _mini_alpha > 0.01:
+			top_left.x = maxf(MAP_RECT.position.x + 4.0, minf(top_left.x, MINIMAP_RECT.position.x - 8.0 - size.x))
 		var fade: float = clampf(float(TOAST_MS - age) / 600.0, 0.0, 1.0) * slide
 		modulate_box(_toast_box, fade)
 		_cv.draw_style_box(_toast_box, Rect2(top_left, size))
@@ -4105,12 +4303,157 @@ func _fit_text(text: String, width: float, size: int) -> String:
 	return text if _text_size(text, size).x <= width else ""
 
 
+# --- Minimap -----------------------------------------------------------------
+
+## The area's unscaled isometric point for a world point.
+func _iso_unscaled(x: float, y: float) -> Vector2:
+	return Vector2(x + y, (x - y) * 0.5)
+
+
+func _mini_of_iso(u: Vector2) -> Vector2:
+	return _mini_origin + (u - _mini_bounds.position) * _mini_scale
+
+
+func _iso_of_mini(point: Vector2) -> Vector2:
+	return (point - _mini_origin) / _mini_scale + _mini_bounds.position
+
+
+func _mini_polygon(points: Array) -> PackedVector2Array:
+	var result: PackedVector2Array = PackedVector2Array()
+	for point: Variant in points:
+		var p: Vector2 = Vector2(point[0], point[1]) if point is Array else point
+		result.append(_mini_of_iso(_iso_unscaled(p.x, p.y)))
+	return result
+
+
+## Works out the minimap's still picture once: the card's inner area holds
+## the area's bounds at one scale, centred.
+func _plan_minimap() -> void:
+	_mini_lots.clear()
+	_mini_street.clear()
+	_mini_buildings.clear()
+	if _mini_bounds.size.x <= 0.0 or _mini_bounds.size.y <= 0.0:
+		return
+	var inner: Rect2 = MINIMAP_RECT.grow(-MINIMAP_PAD)
+	_mini_scale = minf(inner.size.x / _mini_bounds.size.x, inner.size.y / _mini_bounds.size.y)
+	_mini_origin = inner.get_center() - _mini_bounds.size * _mini_scale / 2.0
+	for lot_id: String in area.lots:
+		_mini_lots.append(_mini_polygon(area.lots[lot_id]["boundary"]))
+	var clip: PackedVector2Array = PackedVector2Array([inner.position, Vector2(inner.end.x, inner.position.y), inner.end, Vector2(inner.position.x, inner.end.y)])
+	for street_id: String in area.streets:
+		var street: Dictionary = area.streets[street_id]
+		var line: Array = street["centerline"]
+		var half: float = float(street["width"]) / 2.0
+		for index: int in line.size() - 1:
+			var a: Vector2 = Vector2(line[index][0], line[index][1])
+			var b: Vector2 = Vector2(line[index + 1][0], line[index + 1][1])
+			var along: Vector2 = (b - a).normalized()
+			var across: Vector2 = along.orthogonal() * half
+			# Run on past the ends, then cut to the card.
+			a -= along * 400.0 * FOOT
+			b += along * 400.0 * FOOT
+			var strip: PackedVector2Array = _mini_polygon([a + across, b + across, b - across, a - across])
+			for piece: PackedVector2Array in Geometry2D.intersect_polygons(strip, clip):
+				_mini_street.append(piece)
+	for building_id: String in _building_ids:
+		_mini_buildings.append([building_id, _mini_polygon(area.buildings[building_id]["footprint"])])
+
+
+## Whether the minimap is worth showing: asked for, and some of the area is
+## out of the map's view.
+func _minimap_wanted() -> bool:
+	if not minimap_visible or _mini_lots.is_empty():
+		return false
+	if _mini_dragging:
+		return true
+	var view: Rect2 = MAP_RECT.grow(20.0)
+	var b: Rect2 = _mini_bounds
+	for corner: Vector2 in [b.position, Vector2(b.end.x, b.position.y), b.end, Vector2(b.position.x, b.end.y)]:
+		if not view.has_point(corner * _scale + _offset):
+			return true
+	return false
+
+
+func _minimap_has(point: Vector2) -> bool:
+	return _mini_alpha > 0.5 and MINIMAP_RECT.has_point(point)
+
+
+func _draw_minimap() -> void:
+	var now: int = Time.get_ticks_msec()
+	var want: bool = _minimap_wanted()
+	if want != _mini_want:
+		_mini_want = want
+		# Start the new fade from where the old one had got to.
+		var done: float = _mini_alpha if want else 1.0 - _mini_alpha
+		_mini_since = now - int(done * float(MINIMAP_FADE_MS))
+	var t: float = clampf(float(now - _mini_since) / float(MINIMAP_FADE_MS), 0.0, 1.0)
+	_mini_alpha = t if _mini_want else 1.0 - t
+	if _mini_alpha < 0.01:
+		return
+	var a: float = _mini_alpha
+	var card: Rect2 = MINIMAP_RECT
+	var inner: Rect2 = card.grow(-MINIMAP_PAD)
+	modulate_box(_mini_box, a)
+	_cv.draw_style_box(_mini_box, card)
+	modulate_box(_mini_box, 1.0)
+	_cv.draw_rect(inner, Color(0.80, 0.84, 0.70, a))
+	for lot: PackedVector2Array in _mini_lots:
+		_cv.draw_colored_polygon(lot, Color(0.66, 0.76, 0.54, a))
+		_cv.draw_polyline(_closed(lot), Color(0.95, 0.94, 0.88, 0.8 * a), 1.0)
+	for piece: PackedVector2Array in _mini_street:
+		_cv.draw_colored_polygon(piece, Color(0.48, 0.48, 0.50, a))
+	for item: Array in _mini_buildings:
+		var id: String = item[0]
+		var shape: PackedVector2Array = item[1]
+		var fill: Color = Color(0.93, 0.89, 0.80)
+		if id == _frame_home:
+			fill = TEAL
+		elif _is_store(area.buildings[id]):
+			fill = CHERRY
+		_cv.draw_colored_polygon(shape, Color(fill, a))
+		_cv.draw_polyline(_closed(shape), Color(INK, 0.7 * a), 1.0)
+	# People outdoors, the player's household on top.
+	for pass_players: bool in [false, true]:
+		for person_id: String in _screen_positions:
+			var person: Dictionary = simulation.state.people[person_id]
+			if _is_players_person(person) != pass_players:
+				continue
+			var at: Vector2 = _mini_of_iso(_iso_of_screen(_screen_positions[person_id]))
+			if not inner.grow(-1.0).has_point(at):
+				continue
+			var color: Color = COLOR_PLAYER if pass_players else COLOR_NEIGHBOR
+			_cv.draw_circle(at, 2.6, Color(PAPER, a))
+			_cv.draw_circle(at, 1.8, Color(color, a))
+	# What the map shows now, cut to the card.
+	var view: Rect2 = Rect2(_mini_of_iso(_iso_of_screen(MAP_RECT.position)), MAP_RECT.size / _scale * _mini_scale)
+	view = view.intersection(inner)
+	if view.has_area():
+		_cv.draw_rect(view, Color(1, 1, 1, 0.16 * a))
+		_cv.draw_rect(view, Color(TEAL_DARK, 0.95 * a), false, 1.5)
+
+
+## Glides the camera so the minimap point comes to the middle of the map.
+func _minimap_go(point: Vector2) -> void:
+	var inner: Rect2 = MINIMAP_RECT.grow(-MINIMAP_PAD)
+	var p: Vector2 = point.clamp(inner.position, inner.end)
+	_following = false
+	_focus_point = _iso_of_mini(p)
+	_start_focus("point", "")
+
+
 # --- Input -------------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var motion: InputEventMouseMotion = event
 		_hover = motion.position
+		if _mini_dragging:
+			if (motion.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+				_minimap_go(motion.position)
+			else:
+				_mini_dragging = false
+			get_viewport().set_input_as_handled()
+			return
 		if _pressing and (motion.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE)) != 0:
 			if not _dragging and motion.position.distance_to(_press_at) > DRAG_THRESHOLD:
 				_dragging = true
@@ -4172,15 +4515,34 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if click.button_index != MOUSE_BUTTON_LEFT:
 		return
+	if _mini_dragging and not click.pressed:
+		_mini_dragging = false
+		get_viewport().set_input_as_handled()
+		return
+	if click.pressed and _minimap_has(click.position):
+		_mini_dragging = true
+		_minimap_go(click.position)
+		get_viewport().set_input_as_handled()
+		return
 	if click.pressed:
 		_pressing = true
 		_dragging = false
 		_press_at = click.position
+		_double_pressed = false
+		if click.double_click and not INTERIOR_RECT.has_point(click.position):
+			var person_id: String = _person_at(click.position)
+			if person_id != "":
+				_double_pressed = true
+				follow_person(person_id)
+				_add_ripple(click.position, true)
+				get_viewport().set_input_as_handled()
 		return
-	# Released: a click unless the mouse was dragged to look around.
-	var was_drag: bool = _dragging
+	# Released: a click unless the mouse was dragged to look around, or it
+	# ends a double-click (the first click already did what a click does).
+	var was_drag: bool = _dragging or _double_pressed
 	_pressing = false
 	_dragging = false
+	_double_pressed = false
 	if was_drag:
 		return
 	_click(click.position)

@@ -29,6 +29,7 @@ const WeekSummary := preload("res://sim/reports/week_summary.gd")
 const WorldView := preload("res://view/world_view.gd")
 const BuildingPage := preload("res://view/building_page.gd")
 const Tips := preload("res://view/tips.gd")
+const TextSize := preload("res://view/text_size.gd")
 
 const SPEED_LABELS: Array[String] = ["Pause", "1 min/s", "10 min/s", "1 hour/s"]
 ## Keyboard shortcuts as handled in main.gd's _unhandled_key_input.
@@ -43,6 +44,34 @@ const MONTH_NAMES: Array[String] = [
 	"July", "August", "September", "October", "November", "December",
 ]
 const FEED_LINES: int = 7
+## With Large text the feed shows one line fewer, each a little taller.
+const FEED_LINES_LARGE: int = 6
+const FEED_ROW_HEIGHT_LARGE: int = 22
+## The feed's filters: id, tab label, tooltip.
+const FEED_FILTERS: Array[Array] = [
+	["all", "All", "Everything that happens on the street"],
+	["household", "Your household", "News about your own family: their talks, money, birthdays and errands"],
+	["money", "Money", "Wages, rent, shopping and empty pantries, for every household"],
+	["neighbors", "Neighbors", "Conversations on the street: your family's with the neighbors, and the neighbors' among themselves"],
+]
+const FEED_EMPTY_TEXT: Dictionary = {
+	"all": "Nothing yet. News of the street will appear here.",
+	"household": "Nothing about your household yet.",
+	"money": "No money news yet: rent is taken on Monday, wages paid on Friday.",
+	"neighbors": "No conversations yet.",
+}
+const MONEY_EVENTS: Array[String] = ["payday", "rent_paid", "shopping", "empty_pantry", "household_short_of_money", "missed_work"]
+## Similar events within this many game minutes of the next are folded
+## together, once there are at least FEED_COLLAPSE_AT more of them.
+const FEED_GROUP_MINUTES: int = 120
+const FEED_COLLAPSE_AT: int = 2
+## Event types that may be folded, with the words for one and for several.
+const FEED_NOUNS: Dictionary = {
+	"conversation": ["conversation", "conversations"], "shopping": ["shopping trip", "shopping trips"],
+	"payday": ["payday", "paydays"], "rent_paid": ["rent payment", "rent payments"],
+	"empty_pantry": ["empty pantry", "empty pantries"], "household_short_of_money": ["money trouble", "money troubles"],
+	"missed_work": ["missed day of work", "missed days of work"],
+}
 ## How long a new line in the feed stays highlighted, in real milliseconds.
 const FEED_FRESH_MS: int = 5000
 const NEED_LABELS: Dictionary = {"hunger": "Fed", "rest": "Rested", "company": "Company", "fun": "Fun"}
@@ -98,6 +127,11 @@ const FEED_SLIDE_MS: int = 380
 const FEED_ROW_HEIGHT: int = 20
 ## Regard shown as a full bar in the neighbors list.
 const REGARD_METER_SPAN: int = 40
+const METER_WIDTH: float = 46.0
+## Room at the left of the meter for the chevron after a change, and how long
+## the chevron stays, in real milliseconds.
+const METER_MARK_WIDTH: float = 10.0
+const METER_CHANGE_MS: int = 15000
 const MESSAGE_FONT_SIZE: int = 12
 ## The note under the top bar stops short of the side panel and its badge.
 const MESSAGE_MAX_WIDTH: float = 860.0
@@ -132,6 +166,7 @@ var _need_values: Dictionary = {}
 var _need_shown: Dictionary = {}
 var _last_tick_ms: int = -1
 var _need_fills: Array[StyleBoxFlat] = []
+var _need_warnings: Dictionary = {}
 ## person id -> {panel, name, word, meter, mine, theirs, met}
 var _neighbor_rows: Dictionary = {}
 var _neighbor_list: VBoxContainer
@@ -143,6 +178,15 @@ var _week_summary_key: String = ""
 ## One drawn row per feed line: {row, text, event_id}
 var _feed_rows: Array[Dictionary] = []
 var _feed_empty: Label
+var _feed_tabs: Dictionary = {}
+var _feed_filter: String = "all"
+var _feed_slots: int = FEED_LINES
+## Groups of folded lines the player has opened, by group id.
+var _feed_expanded: Dictionary = {}
+var _feed_cache_key: String = ""
+var _feed_shown: Array[Dictionary] = []
+var _chevron_up: ImageTexture
+var _chevron_down: ImageTexture
 var _player_ids: Array = []
 var _music_button: Button
 var _sound_button: Button
@@ -187,6 +231,13 @@ var _speed_index: int = -1
 var _dial_angle: float = -1.0
 var _dial_target: float = 0.0
 var _message_note: PanelContainer
+var _side_panel: PanelContainer
+var _feed_panel: PanelContainer
+var _large_text: bool = false
+## Frames to wait before the neighbors list is fitted again (after the text
+## size changes, the rows need a frame to take their new height).
+var _refit_wait: int = 0
+var _money_height: float = -1.0
 
 
 func setup(sim: Simulation) -> void:
@@ -303,6 +354,13 @@ static func _make_theme() -> Theme:
 	t.set_font_size("font_size", "RowButton", 12)
 	for key: String in ["font_color", "font_hover_color", "font_hover_pressed_color"]:
 		t.set_color(key, "RowButton", PAPER)
+
+	# The feed's filter tabs: small, the chosen one teal.
+	t.set_type_variation("FeedTab", "Button")
+	_set_button_styles(t, "FeedTab", PAPER_ROW, PAPER, TEAL, 9, 8, 0)
+	t.set_font_size("font_size", "FeedTab", 11)
+	for key: String in ["font_pressed_color", "font_hover_pressed_color"]:
+		t.set_color(key, "FeedTab", PAPER)
 
 	t.set_type_variation("RowA", "PanelContainer")
 	t.set_stylebox("panel", "RowA", _box(PAPER_ROW, 5, 8, 3))
@@ -561,6 +619,7 @@ func _build_side_panel() -> void:
 	panel.position = Vector2(915, 78)
 	panel.custom_minimum_size = Vector2(350, 627)
 	add_child(panel)
+	_side_panel = panel
 	var column: VBoxContainer = VBoxContainer.new()
 	column.add_theme_constant_override("separation", 4)
 	panel.add_child(column)
@@ -586,6 +645,10 @@ func _build_side_panel() -> void:
 		var button: Button = Button.new()
 		button.theme_type_variation = "MemberTab"
 		button.text = simulation.state.people[person_id]["given_name"]
+		# The tabs share the panel's width exactly, so their text keeps its size.
+		button.set_meta(TextSize.FIXED_META, true)
+		button.set_meta("normal_font_size", 14)
+		button.add_theme_font_size_override("font_size", 14)
 		button.toggle_mode = true
 		button.focus_mode = Control.FOCUS_NONE
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -653,7 +716,7 @@ func _build_side_panel() -> void:
 		var row: HBoxContainer = HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
 		row.mouse_filter = Control.MOUSE_FILTER_STOP
-		row.tooltip_text = NEED_TIPS[need_name]
+		row.tooltip_text = NEED_TIPS[need_name] + "\nBelow %d%% a warning mark shows beside the bar." % NEED_LOW_PERCENT
 		var icon: Control = Control.new()
 		icon.custom_minimum_size = Vector2(16, 16)
 		icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -673,6 +736,17 @@ func _build_side_panel() -> void:
 		bar.custom_minimum_size = Vector2(0, 11)
 		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(bar)
+		# A small warning mark when the need runs low, so it reads without the
+		# bar's colour. Its space is always kept, so the row never shifts.
+		var warn: Control = Control.new()
+		warn.custom_minimum_size = Vector2(13, 13)
+		warn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		warn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		warn.visible = true
+		warn.set_meta("low", false)
+		warn.draw.connect(func() -> void: _draw_need_warning(warn))
+		row.add_child(warn)
+		_need_warnings[need_name] = warn
 		var value: Label = Label.new()
 		value.custom_minimum_size = Vector2(36, 0)
 		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -709,7 +783,7 @@ func _build_side_panel() -> void:
 	var key: Label = _caption("bars: yours, then theirs")
 	key.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	key.mouse_filter = Control.MOUSE_FILTER_STOP
-	key.tooltip_text = "Each neighbor has two small bars: what your selected person thinks of them (top)\nand what they think back (bottom). Green grows right for warm, red left for cool."
+	key.tooltip_text = "Each neighbor has two small bars: what your selected person thinks of them (top)\nand what they think back (bottom). A bar grows right, pointed, for warm; left for cool.\nAfter a talk a small chevron shows which way your person's regard moved."
 	neighbors_title.add_child(key)
 	# The list scrolls, so a long street never pushes anything off the panel.
 	var scroll: ScrollContainer = ScrollContainer.new()
@@ -766,7 +840,7 @@ func _neighbor_row(person_id: String) -> PanelContainer:
 	word.add_theme_font_size_override("font_size", 11)
 	row.add_child(word)
 	var meter: Control = Control.new()
-	meter.custom_minimum_size = Vector2(46, 9)
+	meter.custom_minimum_size = Vector2(METER_WIDTH + METER_MARK_WIDTH, 9)
 	meter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	meter.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(meter)
@@ -779,12 +853,44 @@ func _neighbor_row(person_id: String) -> PanelContainer:
 	row.add_child(talk)
 	var entry: Dictionary = {
 		"panel": shaded, "name": name, "word": word, "meter": meter, "mine": 0, "theirs": 0, "met": false, "talks": -1,
-		"week_talks": -1, "talk": talk, "talk_tip": "",
+		"week_talks": -1, "talk": talk, "talk_tip": "", "viewer": "", "change": 0, "change_ms": 0,
 	}
-	meter.draw.connect(func() -> void:
-		HudArt.regard_meter(meter, Rect2(Vector2(0, 0), meter.size), entry["mine"], entry["theirs"], entry["met"], REGARD_METER_SPAN))
+	meter.draw.connect(func() -> void: _draw_meter(meter, entry))
 	_neighbor_rows[person_id] = entry
 	return shaded
+
+
+## The two regard bars, with shape cues that do not rely on colour: each bar
+## ends in a small point showing which way it grows (right warm, left cool),
+## and for a while after a talk an up or down chevron at the left shows which
+## way the selected person's regard just moved.
+func _draw_meter(meter: Control, entry: Dictionary) -> void:
+	var rect: Rect2 = Rect2(Vector2(METER_MARK_WIDTH, 0), Vector2(METER_WIDTH, meter.size.y))
+	HudArt.regard_meter(meter, rect, entry["mine"], entry["theirs"], entry["met"], REGARD_METER_SPAN)
+	if entry["met"]:
+		var middle: float = rect.position.x + rect.size.x / 2.0
+		var half: float = rect.size.x / 2.0
+		var row_h: float = (rect.size.y - 1.0) / 2.0
+		var index: int = 0
+		for value: int in [entry["mine"], entry["theirs"]]:
+			if value != 0:
+				var length: float = clampf(float(absi(value)) / float(REGARD_METER_SPAN), 0.0, 1.0) * half
+				var y: float = rect.position.y + float(index) * (row_h + 1.0)
+				var tip: float = middle + (length if value > 0 else -length)
+				var out: float = 1.0 if value > 0 else -1.0
+				var point: float = clampf(tip + out * 2.5, rect.position.x, rect.end.x)
+				meter.draw_colored_polygon(PackedVector2Array([
+					Vector2(tip, y - 0.5), Vector2(point, y + row_h / 2.0), Vector2(tip, y + row_h + 0.5),
+				]), INK if value > 0 else CHERRY.darkened(0.3))
+			index += 1
+	var change: int = entry["change"]
+	if change != 0:
+		var c: Vector2 = Vector2(METER_MARK_WIDTH / 2.0 - 1.0, meter.size.y / 2.0)
+		var color: Color = LEAF.darkened(0.25) if change > 0 else CHERRY
+		var d: float = -1.0 if change > 0 else 1.0
+		meter.draw_colored_polygon(PackedVector2Array([
+			c + Vector2(-3.5, -d * 2.0), c + Vector2(0, d * 2.5), c + Vector2(3.5, -d * 2.0),
+		]), color)
 
 
 ## Under a link's text while the pointer is on it.
@@ -816,6 +922,14 @@ func _restripe_neighbors() -> void:
 ## whole number of rows, so it ends cleanly at the panel's foot; the rest
 ## scroll. The few pixels left over go below the list.
 func _fit_neighbor_list() -> void:
+	# When the money lines above change height (a third line with Large text),
+	# the list is fitted again to the room left.
+	if _money_label.size.y != _money_height:
+		_money_height = _money_label.size.y
+		_refit_neighbors()
+	if _refit_wait > 0:
+		_refit_wait -= 1
+		return
 	if _neighbor_rows_fitted or _neighbor_order.is_empty():
 		return
 	var first: Control = _neighbor_rows[_neighbor_order[0]]["panel"]
@@ -894,7 +1008,7 @@ func _refresh_tabs(selected_id: String) -> void:
 		var tip: String = "%s %s, age %d: %s.%s" % [
 			person["given_name"], person["family_name"], SimDate.age_on(person["birth_day"], simulation.clock.day_index),
 			Describe.activity(simulation, person),
-			"\nClick again to find them on the street." if chosen else "\nClick to select.",
+			"\nClick again to find them on the street." if chosen else "\nClick to select.  (Tab and Shift+Tab move between family members.)",
 		]
 		if tip != _member_tips.get(person_id, ""):
 			_member_tips[person_id] = tip
@@ -920,21 +1034,47 @@ func _build_feed() -> void:
 	panel.position = Vector2(20, 512)
 	panel.custom_minimum_size = Vector2(880, 193)
 	add_child(panel)
+	_feed_panel = panel
 	var column: VBoxContainer = VBoxContainer.new()
 	column.add_theme_constant_override("separation", 1)
 	panel.add_child(column)
-	column.add_child(_heading("What has happened"))
+	# The heading, with the filter tabs on the same line to save height.
+	var head: HBoxContainer = HBoxContainer.new()
+	head.add_theme_constant_override("separation", 4)
+	column.add_child(head)
+	head.add_child(_heading("What has happened"))
+	var filler: Control = Control.new()
+	filler.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(filler)
+	var group: ButtonGroup = ButtonGroup.new()
+	for entry: Array in FEED_FILTERS:
+		var tab: Button = Button.new()
+		tab.theme_type_variation = "FeedTab"
+		tab.text = entry[1]
+		tab.toggle_mode = true
+		tab.button_group = group
+		tab.button_pressed = entry[0] == _feed_filter
+		tab.focus_mode = Control.FOCUS_NONE
+		tab.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		tab.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		tab.tooltip_text = entry[2]
+		var filter_id: String = entry[0]
+		tab.pressed.connect(func() -> void: set_feed_filter(filter_id))
+		head.add_child(tab)
+		_feed_tabs[filter_id] = tab
 	_feed_empty = Label.new()
-	_feed_empty.text = "Nothing yet. News of the street will appear here."
+	_feed_empty.text = FEED_EMPTY_TEXT["all"]
 	_feed_empty.add_theme_color_override("font_color", INK_SOFT)
 	_feed_empty.add_theme_font_size_override("font_size", 13)
 	column.add_child(_feed_empty)
+	_chevron_up = _chevron_texture(true)
+	_chevron_down = _chevron_texture(false)
 	for index: int in FEED_LINES:
 		var row: Control = Control.new()
 		row.custom_minimum_size = Vector2(0, FEED_ROW_HEIGHT)
 		row.clip_contents = true
 		# A line is a link to where it happened; its tooltip also shows the full
-		# text when the line is cut short.
+		# text when the line is cut short. A "more" line opens its group.
 		row.mouse_filter = Control.MOUSE_FILTER_STOP
 		row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		var text: RichTextLabel = RichTextLabel.new()
@@ -946,26 +1086,96 @@ func _build_feed() -> void:
 		text.size = Vector2(820, FEED_ROW_HEIGHT)
 		text.add_theme_font_size_override("normal_font_size", 13)
 		text.add_theme_font_size_override("bold_font_size", 13)
+		text.add_theme_font_size_override("italics_font_size", 12)
 		row.add_child(text)
-		var entry: Dictionary = {"row": row, "text": text, "event_id": -1, "kind": "", "slide": 0.0, "glow": 0.0, "hover": false}
+		var entry: Dictionary = {"row": row, "text": text, "key": "", "item": {}, "kind": "", "slide": 0.0, "glow": 0.0, "hover": false}
 		row.draw.connect(func() -> void: _draw_feed_row(entry))
 		row.mouse_entered.connect(func() -> void: entry["hover"] = true; row.queue_redraw())
 		row.mouse_exited.connect(func() -> void: entry["hover"] = false; row.queue_redraw())
 		row.gui_input.connect(func(event: InputEvent) -> void:
 			if _is_left_click(event):
-				focus_feed_line(index)
+				click_feed_line(index)
 				row.accept_event())
 		column.add_child(row)
 		_feed_rows.append(entry)
 
 
+## A small arrow drawn into an image at start-up (no image files), for the
+## feed's regard changes: up for warmer, down for cooler. The shape carries
+## the meaning; the colour only repeats it.
+func _chevron_texture(up: bool) -> ImageTexture:
+	var w: int = 9
+	var h: int = 9
+	var image: Image = Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var color: Color = LEAF.darkened(0.25) if up else CHERRY
+	for y: int in h:
+		for x: int in w:
+			# A solid triangle, its point up or down, a pixel short of the edges.
+			var row: float = float(y) + 0.5 if up else float(h - 1 - y) + 0.5
+			var half: float = (row - 1.0) * 0.5
+			var inside: bool = row >= 1.0 and row <= float(h) - 1.0 and absf(float(x) + 0.5 - float(w) / 2.0) <= half + 0.5
+			image.set_pixel(x, y, color if inside else Color(color, 0.0))
+	return ImageTexture.create_from_image(image)
+
+
+## Shows one filter of the feed: "all", "household", "money" or "neighbors".
+func set_feed_filter(filter_id: String) -> void:
+	if not _feed_tabs.has(filter_id):
+		return
+	_feed_filter = filter_id
+	for tab_id: String in _feed_tabs:
+		(_feed_tabs[tab_id] as Button).set_pressed_no_signal(tab_id == filter_id)
+	_feed_empty.text = FEED_EMPTY_TEXT[filter_id]
+	_feed_cache_key = ""
+
+
+func feed_filter() -> String:
+	return _feed_filter
+
+
+## The kinds of the feed's lines as shown, top first ("event", "more" or
+## "less"); for the self-check.
+func feed_line_kinds() -> Array[String]:
+	_refresh_feed()
+	var kinds: Array[String] = []
+	for item: Dictionary in _feed_shown:
+		kinds.append(str(item["kind"]))
+	return kinds
+
+
+## Fewer, taller lines with Large text, so the feed still fits its panel.
+func _apply_feed_size() -> void:
+	_feed_slots = FEED_LINES_LARGE if _large_text else FEED_LINES
+	var height: int = FEED_ROW_HEIGHT_LARGE if _large_text else FEED_ROW_HEIGHT
+	for entry: Dictionary in _feed_rows:
+		(entry["row"] as Control).custom_minimum_size.y = height
+		(entry["text"] as RichTextLabel).size.y = height
+		entry["key"] = ""
+	_feed_cache_key = ""
+
+
 func _draw_feed_row(entry: Dictionary) -> void:
 	var row: Control = entry["row"]
-	if entry["event_id"] < 0:
+	var item: Dictionary = entry["item"]
+	if item.is_empty():
 		return
 	var glow: float = entry["glow"]
 	if glow > 0.0:
 		row.draw_rect(Rect2(Vector2(entry["slide"], 0), Vector2(row.size.x, row.size.y - 1)), Color(MUSTARD, 0.30 * glow))
+	if item.get("member", false):
+		# A line inside an opened group: a thin rule down its left side.
+		row.draw_line(Vector2(2, 1), Vector2(2, row.size.y - 1), Color(TEAL, 0.45), 2.0)
+	var middle: Vector2 = Vector2(11.0 + float(entry["slide"]), row.size.y / 2.0)
+	if item["kind"] != "event":
+		if entry["hover"]:
+			row.draw_rect(Rect2(Vector2.ZERO, Vector2(row.size.x, row.size.y - 1)), FEED_HOVER)
+		# A round button with a plus (show more) or a minus (show fewer).
+		row.draw_circle(middle, 7.0, Color(TEAL, 0.14))
+		row.draw_arc(middle, 7.0, 0.0, TAU, 20, Color(TEAL, 0.7), 1.2, true)
+		row.draw_line(middle + Vector2(-3.5, 0), middle + Vector2(3.5, 0), TEAL, 1.6)
+		if item["kind"] == "more":
+			row.draw_line(middle + Vector2(0, -3.5), middle + Vector2(0, 3.5), TEAL, 1.6)
+		return
 	if entry["hover"]:
 		row.draw_rect(Rect2(Vector2.ZERO, Vector2(row.size.x, row.size.y - 1)), FEED_HOVER)
 		var text: RichTextLabel = entry["text"]
@@ -977,24 +1187,125 @@ func _draw_feed_row(entry: Dictionary) -> void:
 		row.draw_circle(at, 1.6, TEAL)
 		for direction: Vector2 in [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]:
 			row.draw_line(at + direction * 6.0, at + direction * 8.5, TEAL, 1.5)
-	HudArt.event_icon(row, Vector2(11.0 + float(entry["slide"]), row.size.y / 2.0), entry["kind"], 8.0)
+	HudArt.event_icon(row, middle, entry["kind"], 8.0)
 
 
-## Asks main.gd to show where the feed's line (0 is the newest) happened.
+## A click on a feed line (0 is the top one): an event line finds where it
+## happened; a "more" or "fewer" line opens or closes its group.
+func click_feed_line(slot: int) -> void:
+	if slot < 0 or slot >= _feed_rows.size():
+		return
+	var item: Dictionary = _feed_rows[slot]["item"]
+	if item.is_empty():
+		return
+	if item["kind"] == "event":
+		focus_feed_line(slot)
+		return
+	if item["kind"] == "more":
+		_feed_expanded[item["group"]] = true
+	else:
+		_feed_expanded.erase(item["group"])
+	_feed_cache_key = ""
+
+
+## Asks main.gd to show where the feed's line (0 is the top one) happened.
 ## Returns false if there is no such line or nothing to show.
 func focus_feed_line(slot: int) -> bool:
 	if slot < 0 or slot >= _feed_rows.size():
 		return false
-	var event_id: int = _feed_rows[slot]["event_id"]
-	var log: Array = simulation.state.event_log
-	for index: int in range(log.size() - 1, maxi(log.size() - 1 - _feed_rows.size(), -1), -1):
-		if log[index]["id"] == event_id:
-			var target: Array = event_target(log[index])
-			if target.is_empty():
+	var item: Dictionary = _feed_rows[slot]["item"]
+	if item.is_empty() or item["kind"] != "event":
+		return false
+	var target: Array = event_target(item["event"])
+	if target.is_empty():
+		return false
+	focus_requested.emit(target[0], target[1])
+	return true
+
+
+## Whether an event belongs in the feed under the filter chosen.
+func _feed_matches(event: Dictionary) -> bool:
+	match _feed_filter:
+		"household":
+			return _involves_household(event)
+		"money":
+			return MONEY_EVENTS.has(event["type"])
+		"neighbors":
+			if event["type"] != "conversation":
 				return false
-			focus_requested.emit(target[0], target[1])
-			return true
-	return false
+			return not (_player_ids.has(event["a"]) and _player_ids.has(event["b"]))
+	return true
+
+
+func _involves_household(event: Dictionary) -> bool:
+	if event["type"] == "conversation":
+		return _player_ids.has(event["a"]) or _player_ids.has(event["b"])
+	if event.has("household_id"):
+		return simulation.state.households[event["household_id"]]["player_controlled"]
+	return _player_ids.has(event.get("person_id", ""))
+
+
+## Which events may be folded together: those of the same key. News for the
+## player's own household is never folded away.
+func _collapse_key(event: Dictionary) -> String:
+	if _involves_household(event):
+		return ""
+	if FEED_NOUNS.has(event["type"]):
+		return event["type"]
+	return ""
+
+
+static func _event_minute(event: Dictionary) -> int:
+	return int(event["day"]) * 1440 + int(event["minute"])
+
+
+## The feed's lines, top first: events, and for a run of similar events close
+## together, the newest with a "N more" line standing for the rest (or, once
+## opened, all of them and a "show fewer" line). Groups are named by their
+## oldest event, which stays the same as newer ones join.
+func _feed_items() -> Array[Dictionary]:
+	var log: Array = simulation.state.event_log
+	var items: Array[Dictionary] = []
+	var index: int = log.size() - 1
+	while index >= 0 and items.size() < _feed_slots:
+		var event: Dictionary = log[index]
+		index -= 1
+		if not _feed_matches(event):
+			continue
+		items.append({"kind": "event", "event": event, "key": "e%d" % event["id"]})
+		var key: String = _collapse_key(event)
+		if key == "":
+			continue
+		var group: Array[Dictionary] = []
+		var last: int = _event_minute(event)
+		var scan: int = index
+		while scan >= 0:
+			var other: Dictionary = log[scan]
+			if not _feed_matches(other):
+				scan -= 1
+				continue
+			if _collapse_key(other) != key or last - _event_minute(other) > FEED_GROUP_MINUTES:
+				break
+			group.append(other)
+			last = _event_minute(other)
+			scan -= 1
+		if group.size() < FEED_COLLAPSE_AT:
+			continue
+		index = scan
+		var group_id: String = "g%d" % group[group.size() - 1]["id"]
+		if _feed_expanded.has(group_id):
+			items[items.size() - 1]["member"] = true
+			for other: Dictionary in group:
+				if items.size() >= _feed_slots:
+					break
+				items.append({"kind": "event", "event": other, "key": "e%d" % other["id"], "member": true})
+			if items.size() < _feed_slots:
+				items.append({"kind": "less", "group": group_id, "key": "l" + group_id, "member": true})
+		else:
+			var noun: Array = FEED_NOUNS[key]
+			items.append({"kind": "more", "group": group_id, "key": "m%s_%d" % [group_id, group.size()],
+					"text": "%d more %s close together" % [group.size(), noun[0] if group.size() == 1 else noun[1]]})
+	return items
 
 
 ## What to show on the street for an event: ["person", id] or
@@ -1185,6 +1496,8 @@ func show_sheet(title: String, text: String, actions: Array = [], close_label: S
 		child.queue_free()
 	if content != null:
 		_sheet_content.add_child(content)
+		if _large_text:
+			TextSize.scale_overrides(content, TextSize.factor(true))
 	_sheet_content.visible = content != null
 	_sheet_text.visible = content == null
 	for child: Node in _sheet_buttons.get_children():
@@ -1395,6 +1708,23 @@ func _refresh_person(selected_id: String) -> void:
 			fill = _need_fills[1]
 		bar.add_theme_stylebox_override("fill", fill)
 		(_need_values[need_name] as Label).text = "%d%%" % percent
+		var warn: Control = _need_warnings[need_name]
+		var low: bool = percent < NEED_LOW_PERCENT
+		if bool(warn.get_meta("low")) != low:
+			warn.set_meta("low", low)
+			warn.queue_redraw()
+
+
+## A little warning triangle with an exclamation mark, drawn when low.
+func _draw_need_warning(warn: Control) -> void:
+	if not bool(warn.get_meta("low")):
+		return
+	var w: float = warn.size.x
+	var h: float = warn.size.y
+	var points: PackedVector2Array = PackedVector2Array([Vector2(w / 2.0, 0.5), Vector2(w - 0.5, h - 0.5), Vector2(0.5, h - 0.5)])
+	warn.draw_colored_polygon(points, CHERRY)
+	warn.draw_line(Vector2(w / 2.0, 4.0), Vector2(w / 2.0, h - 4.5), PAPER, 1.6)
+	warn.draw_circle(Vector2(w / 2.0, h - 2.6), 0.9, PAPER)
 
 
 func _draw_portrait() -> void:
@@ -1412,6 +1742,7 @@ func _refresh_neighbors(selected_id: String) -> void:
 	var viewer: String = selected_id if _player_ids.has(selected_id) else _player_ids[0]
 	var viewer_name: String = simulation.state.people[viewer]["given_name"]
 	var warmth: Dictionary = {}
+	var now: int = Time.get_ticks_msec()
 	var week_talks_by_pair: Dictionary = {}
 	for pair: Dictionary in _week_summary.get("neighbors", []):
 		week_talks_by_pair[str(pair["member_id"]) + "|" + str(pair["other_id"])] = int(pair["talks"])
@@ -1425,6 +1756,16 @@ func _refresh_neighbors(selected_id: String) -> void:
 		var talks: int = int(simulation.state.relationships[key]["familiarity"]) if met else 0
 		warmth[other_id] = mine + theirs
 		var week_talks: int = week_talks_by_pair.get(viewer + "|" + other_id, 0)
+		if entry["change"] != 0 and now - int(entry["change_ms"]) > METER_CHANGE_MS:
+			entry["change"] = 0
+			(entry["meter"] as Control).queue_redraw()
+		if entry["viewer"] != viewer:
+			# Another person selected: their regard is not a change.
+			entry["viewer"] = viewer
+			entry["change"] = 0
+		elif met and entry["met"] and mine != entry["mine"]:
+			entry["change"] = signi(mine - int(entry["mine"]))
+			entry["change_ms"] = now
 		if met == entry["met"] and mine == entry["mine"] and theirs == entry["theirs"] and talks == entry["talks"] and week_talks == entry["week_talks"]:
 			continue
 		entry["week_talks"] = week_talks
@@ -1527,53 +1868,94 @@ func _draw_ledger() -> void:
 		_ledger.draw_string(font, Vector2(bar_right, y + 9), Describe.money(row[1]), HORIZONTAL_ALIGNMENT_RIGHT, w - bar_right, 11, INK)
 
 
-## The newest lines of the log, each with an icon; a new line slides in from
-## the left and is lit for a few seconds.
+## The feed's lines under the filter chosen, each event with an icon; a new
+## line slides in from the left and is lit for a few seconds. The lines are
+## worked out again only when the log, the filter or an opened group changes.
 func _refresh_feed() -> void:
 	var log: Array = simulation.state.event_log
 	var now: int = Time.get_ticks_msec()
-	_feed_empty.visible = log.is_empty()
+	var cache_key: String = "%d|%s|%d|%s" % [log.size(), _feed_filter, _feed_slots, ",".join(PackedStringArray(_feed_expanded.keys()))]
+	if cache_key != _feed_cache_key:
+		_feed_cache_key = cache_key
+		_feed_shown = _feed_items()
+		_feed_empty.visible = _feed_shown.is_empty()
 	for slot: int in _feed_rows.size():
 		var entry: Dictionary = _feed_rows[slot]
 		var row: Control = entry["row"]
-		var index: int = log.size() - 1 - slot
-		if index < 0:
-			entry["event_id"] = -1
+		if slot >= _feed_shown.size():
+			entry["item"] = {}
+			entry["key"] = ""
 			row.visible = false
 			continue
 		row.visible = true
-		var event: Dictionary = log[index]
-		if not _first_shown.has(event["id"]):
-			_first_shown[event["id"]] = now
+		var item: Dictionary = _feed_shown[slot]
 		var text: RichTextLabel = entry["text"]
-		if entry["event_id"] != event["id"]:
-			entry["event_id"] = event["id"]
-			entry["kind"] = Describe.event_icon(event)
-			text.text = "[b][color=%s]%s[/color][/b]   %s" % [
-				_hex(TEAL), Describe.event_time(event), Describe.event_rich(simulation, event, _player_ids),
-			]
-			var plain: String = "%s   %s" % [Describe.event_time(event), Describe.event(simulation, event)]
-			var clipped: bool = get_theme_default_font().get_string_size(plain, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x > row.size.x - 34.0
-			row.tooltip_text = (plain + "\n\n" if clipped else "") + "Click to see where this happened on the street"
-		var age: int = now - int(_first_shown[event["id"]])
-		var t: float = clampf(float(age) / float(FEED_SLIDE_MS), 0.0, 1.0)
+		var indent: float = 8.0 if item.get("member", false) else 0.0
+		if entry["key"] != item["key"]:
+			entry["key"] = item["key"]
+			entry["item"] = item
+			if item["kind"] == "event":
+				var event: Dictionary = item["event"]
+				entry["kind"] = Describe.event_icon(event)
+				_set_feed_text(text, "[b][color=%s]%s[/color][/b]   %s" % [
+					_hex(TEAL), Describe.event_time(event), Describe.event_rich(simulation, event, _player_ids, true),
+				])
+				var plain: String = "%s   %s" % [Describe.event_time(event), Describe.event(simulation, event)]
+				var clipped: bool = get_theme_default_font().get_string_size(plain, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x > row.size.x - 34.0
+				row.tooltip_text = (plain + "\n\n" if clipped else "") + "Click to see where this happened on the street"
+			elif item["kind"] == "more":
+				entry["kind"] = ""
+				_set_feed_text(text, "[i][color=%s]%s[/color][/i]" % [_hex(INK_SOFT), item["text"]])
+				row.tooltip_text = "Click to show them"
+			else:
+				entry["kind"] = ""
+				_set_feed_text(text, "[i][color=%s]Show fewer[/color][/i]" % _hex(INK_SOFT))
+				row.tooltip_text = "Click to fold these lines together again"
+			row.queue_redraw()
+		# Only events slide in and glow when new; "more" lines just appear.
+		var t: float = 1.0
+		var glow: float = 0.0
+		if item["kind"] == "event":
+			var event_id: int = item["event"]["id"]
+			if not _first_shown.has(event_id):
+				_first_shown[event_id] = now
+			var age: int = now - int(_first_shown[event_id])
+			t = clampf(float(age) / float(FEED_SLIDE_MS), 0.0, 1.0)
+			glow = clampf(1.0 - float(age) / float(FEED_FRESH_MS), 0.0, 1.0)
 		var ease_in: float = 1.0 - pow(1.0 - t, 3.0)
-		var slide: float = -28.0 * (1.0 - ease_in)
-		var glow: float = clampf(1.0 - float(age) / float(FEED_FRESH_MS), 0.0, 1.0)
-		if slide != entry["slide"] or glow != entry["glow"]:
+		var slide: float = -28.0 * (1.0 - ease_in) + indent
+		if slide != entry["slide"] or glow != entry["glow"] or text.position.x != 26.0 + slide:
 			entry["slide"] = slide
 			entry["glow"] = glow
 			text.position.x = 26.0 + slide
-			text.size.x = row.size.x - 26.0
+			text.size.x = row.size.x - 26.0 - slide
 			row.modulate.a = ease_in
 			row.queue_redraw()
 	# Forget lines long gone from the feed.
 	if _first_shown.size() > 200:
 		var keep: Dictionary = {}
-		for entry: Dictionary in _feed_rows:
-			if _first_shown.has(entry["event_id"]):
-				keep[entry["event_id"]] = _first_shown[entry["event_id"]]
+		for item: Dictionary in _feed_shown:
+			if item["kind"] == "event" and _first_shown.has(item["event"]["id"]):
+				keep[item["event"]["id"]] = _first_shown[item["event"]["id"]]
 		_first_shown = keep
+
+
+## Sets a feed line's text, putting a small drawn arrow where Describe marked
+## a regard change going up or down.
+func _set_feed_text(label: RichTextLabel, bbcode: String) -> void:
+	label.clear()
+	var rest: String = bbcode
+	while true:
+		var up: int = rest.find(Describe.CHEVRON_UP)
+		var down: int = rest.find(Describe.CHEVRON_DOWN)
+		var at: int = up if down < 0 or (up >= 0 and up < down) else down
+		if at < 0:
+			label.append_text(rest)
+			return
+		label.append_text(rest.left(at))
+		label.add_image(_chevron_up if at == up else _chevron_down, 9, 9, Color.WHITE, INLINE_ALIGNMENT_CENTER)
+		label.append_text(" ")
+		rest = rest.substr(at + 1)
 
 
 func _refresh_goal_shine() -> void:
@@ -1588,6 +1970,38 @@ func _refresh_goal_shine() -> void:
 				_goal_shine.erase(id)
 
 
+## Normal or Large text (a setting). Large raises the font sizes of the side
+## panel, the feed and the sheets (view/text_size.gd); the top bar, the goals
+## card and the drawn pages keep theirs, since they are laid out to fit.
+func set_large_text(large: bool) -> void:
+	if large == _large_text:
+		return
+	_large_text = large
+	var by: float = TextSize.factor(large)
+	var scaled: Theme = TextSize.scaled_theme(theme, by) if large else null
+	for part: Control in [_side_panel, _feed_panel, _sheet_layer]:
+		part.theme = scaled
+		TextSize.scale_overrides(part, by)
+	_apply_feed_size()
+	# The neighbors list is fitted again to whole rows of the new height.
+	_refit_neighbors()
+	if _sheet_open:
+		_fit_sheet()
+
+
+## Lets the neighbors list fill the room left for it, then, once laid out,
+## fits it again to a whole number of rows.
+func _refit_neighbors() -> void:
+	_neighbor_rows_fitted = false
+	_neighbor_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_neighbor_scroll.custom_minimum_size.y = 0
+	_refit_wait = 2
+
+
+func is_large_text() -> bool:
+	return _large_text
+
+
 ## What is known about a building as a drawn page, for show_sheet's content.
 ## info comes from sim/reports/building_info.gd.
 func building_page(info: Dictionary, viewer_id: String) -> Control:
@@ -1597,7 +2011,28 @@ func building_page(info: Dictionary, viewer_id: String) -> Control:
 
 
 ## The week's summary as a page of a small paper, for show_sheet's content.
-func week_paper(summary: Dictionary, goals: Array) -> Control:
+## A lead, if given, is a short line above the paper (the end of the first
+## week invites the player to carry on).
+func week_paper(summary: Dictionary, goals: Array, lead: String = "") -> Control:
 	var paper: Control = WeekPaper.new()
 	paper.setup(simulation, summary, goals)
-	return paper
+	if lead == "":
+		return paper
+	var page: VBoxContainer = VBoxContainer.new()
+	page.add_theme_constant_override("separation", 8)
+	var line: HBoxContainer = HBoxContainer.new()
+	line.add_theme_constant_override("separation", 8)
+	page.add_child(line)
+	var mark: Control = Control.new()
+	mark.custom_minimum_size = Vector2(16, 16)
+	mark.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	mark.draw.connect(func() -> void:
+		mark.draw_colored_polygon(HudArt.star(mark.size / 2.0, 7.5, 3.2), MUSTARD))
+	line.add_child(mark)
+	var words: Label = Label.new()
+	words.text = lead
+	words.add_theme_font_size_override("font_size", 15)
+	words.add_theme_color_override("font_color", PAPER)
+	line.add_child(words)
+	page.add_child(paper)
+	return page
